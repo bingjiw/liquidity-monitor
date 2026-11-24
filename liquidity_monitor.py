@@ -259,7 +259,7 @@ def fetch_settlement_calendar(days: int = 30) -> pd.DataFrame:
     df["offering_amt"] = pd.to_numeric(df["offering_amt"], errors="coerce")
     df = df[(df["issue_date"].dt.date >= today) & (df["issue_date"].dt.date <= end)]
     g = df.groupby("issue_date").agg(
-        gross_bn=("offering_amt", lambda v: v.sum() / 1e9),
+        gross_bn=("offering_amt", lambda v: v.sum(min_count=1) / 1e9),
         detail=("security_term", lambda v: ", ".join(sorted(set(map(str, v))))),
     ).reset_index()
     return g.sort_values("issue_date")
@@ -513,7 +513,7 @@ def write_report(f: pd.DataFrame, sc: pd.DataFrame, alerts: list[str], cal: pd.D
             if d in taxes: note.append("缴税日")
             if d in month_ends: note.append("月末")
             if d.month == 12 and d.day >= 29: note.append("年末")
-            L.append(f"| {d} | {fmt(r.gross_bn, 1) if r else '—'} | {' · '.join(note + ([r.detail] if r else []))} |")
+            L.append(f"| {d} | {(fmt(r.gross_bn, 1) if pd.notna(r.gross_bn) else '待公布') if r else '—'} | {' · '.join(note + ([r.detail] if r else []))} |")
     L.append("")
     path = out / f"report_{last_day.date()}.md"
     path.write_text("\n".join(L), encoding="utf-8")

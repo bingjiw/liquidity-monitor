@@ -77,7 +77,7 @@ def write_dashboard(f: pd.DataFrame, sc: pd.DataFrame, alerts: list[str], cal: p
                      if f"z_{c}" in valid and pd.notna(valid[f"z_{c}"].ffill().iloc[-1]) else None}
                     for c, p, _, name in SCORED],
         "alerts": alerts,
-        "calendar": [{"date": r.issue_date.strftime("%Y-%m-%d"), "gross_bn": _clean(round(float(r.gross_bn), 1)),
+        "calendar": [{"date": r.issue_date.strftime("%Y-%m-%d"), "gross_bn": _clean(round(float(r.gross_bn), 1)) if pd.notna(r.gross_bn) else None,
                       "detail": r.detail} for r in cal.itertuples()] if not cal.empty else [],
         "log": json.loads(pd.read_csv(log_path).to_json(orient="records")) if log_path.exists() else [],
     }
@@ -341,7 +341,7 @@ document.getElementById("log").innerHTML = `<tr><th>运行日</th><th>数据日<
 
 // 结算日历
 document.getElementById("cal").innerHTML = D.calendar.length
-  ? `<tr><th>结算日</th><th>毛额(十亿美元)</th><th>品种</th></tr>` + D.calendar.map(c => `<tr><td>${c.date}</td><td>${fmt(c.gross_bn)}</td><td>${c.detail}</td></tr>`).join("")
+  ? `<tr><th>结算日</th><th>毛额(十亿美元)</th><th>品种</th></tr>` + D.calendar.map(c => `<tr><td>${c.date}</td><td>${c.gross_bn == null ? "待公布" : fmt(c.gross_bn)}</td><td>${c.detail}</td></tr>`).join("")
   : `<tr><td class="sub">暂无数据</td></tr>`;
 </script>
 </body>
