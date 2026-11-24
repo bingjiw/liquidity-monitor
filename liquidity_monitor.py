@@ -226,9 +226,13 @@ def fetch_settlement_calendar(days: int = 30) -> pd.DataFrame:
     except Exception as e:  # noqa: BLE001
         print(f"[警告] 拍卖数据获取失败: {e}", file=sys.stderr)
     try:
-        r = _get(f"{FISCAL}/v1/accounting/od/upcoming_auctions", {"page[size]": 1000})
+        # 默认按最旧记录排序且分页,必须按发行日过滤
+        r = _get(f"{FISCAL}/v1/accounting/od/upcoming_auctions", {
+            "filter": f"issue_date:gte:{today.isoformat()},issue_date:lte:{end.isoformat()}",
+            "sort": "issue_date", "page[size]": 1000,
+        })
         got = r.json().get("data", [])
-        print(f"  即将拍卖 upcoming_auctions: {len(got)} 条" + (f", 字段 {sorted(got[0])}, 例 {got[0]}" if got else ""))
+        print(f"  即将拍卖 upcoming_auctions: {len(got)} 条")
         for x in got:
             rows.append({k: x.get(k) for k in ("issue_date", "security_type", "security_term", "offering_amt")})
     except Exception as e:  # noqa: BLE001
