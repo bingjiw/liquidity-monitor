@@ -41,6 +41,7 @@ ZSCORE_WINDOW = 756            # 约 3 年工作日,用于滚动标准化
 ZSCORE_MIN_PERIODS = 250       # 至少约 1 年数据才开始出分数
 CHANGE_WINDOW = 20             # "四周变化" = 20 个工作日
 Z_CLIP = 3.0
+MIN_PILLARS = 4                # 至少 4 个支柱有值才出综合指数
 
 PILLAR_WEIGHTS = {
     "A_quantity": 0.25,  # 钱的数量
@@ -219,18 +220,23 @@ def fetch_settlement_calendar(days: int = 30) -> pd.DataFrame:
             "fields": "issue_date,security_type,security_term,offering_amt",
             "page[size]": 1000,
         })
-        rows += r.json().get("data", [])
+        got = r.json().get("data", [])
+        print(f"  拍卖数据 auctions_query: {len(got)} 条")
+        rows += got
     except Exception as e:  # noqa: BLE001
         print(f"[警告] 拍卖数据获取失败: {e}", file=sys.stderr)
     try:
         r = _get(f"{FISCAL}/v1/accounting/od/upcoming_auctions", {"page[size]": 1000})
-        for x in r.json().get("data", []):
+        got = r.json().get("data", [])
+        print(f"  即将拍卖 upcoming_auctions: {len(got)} 条" + (f", 字段 {sorted(got[0])}, 例 {got[0]}" if got else ""))
+        for x in got:
             rows.append({k: x.get(k) for k in ("issue_date", "security_type", "security_term", "offering_amt")})
     except Exception as e:  # noqa: BLE001
         print(f"[警告] 即将拍卖数据获取失败: {e}", file=sys.stderr)
     if not rows:
         return pd.DataFrame(columns=["issue_date", "gross_bn", "detail"])
     df = pd.DataFrame(rows).drop_duplicates()
+    df["offering_amt"] = df["offering_amt"].replace({"null": None, "": None})
     df["issue_date"] = pd.to_datetime(df["issue_date"], errors="coerce")
     df["offering_amt"] = pd.to_numeric(df["offering_amt"], errors="coerce")
     df = df[(df["issue_date"].dt.date >= today) & (df["issue_date"].dt.date <= end)]
@@ -360,12 +366,15 @@ def score(f: pd.DataFrame) -> pd.DataFrame:
             out[f"z_{colname}"] = sign * robust_z(f[colname])
     for p in PILLAR_WEIGHTS:
         cols = [f"z_{c}" for c, pl, _, _ in SCORED if pl == p and f"z_{c}" in out]
-        out[p] = out[cols].mean(axis=1) if cols else float("nan")
-    # 缺失支柱时按剩余权重重新归一
+        # 支柱内至少要有一半序列有值,否则该支柱当天不计
+        need = max(1, (len(cols) + 1) // 2)
+        out[p] = out[cols].mean(axis=1).where(out[cols].notna().sum(axis=1) >= need) if cols else float("nan")
+    # 缺失支柱时按剩余权重重新归一;至少 MIN_PILLARS 个支柱有值才出综合指数
     w = pd.Series(PILLAR_WEIGHTS)
     P = out[list(PILLAR_WEIGHTS)]
     wsum = P.notna().mul(w, axis=1).sum(axis=1).replace(0, float("nan"))
-    out["composite_z"] = P.mul(w, axis=1).sum(axis=1, min_count=1) / wsum
+    out["composite_z"] = (P.mul(w, axis=1).sum(axis=1, min_count=1) / wsum).where(P.notna().sum(axis=1) >= MIN_PILLARS)
+    out["pillars_used"] = P.notna().sum(axis=1)
     out["liquidity_index"] = out["composite_z"].apply(lambda z: round(100 * norm_cdf(z), 1) if pd.notna(z) else z)
     return out
 
@@ -494,10 +503,32 @@ def write_report(f: pd.DataFrame, sc: pd.DataFrame, alerts: list[str], cal: pd.D
     return path
 
 
+def append_daily_log(sc: pd.DataFrame, f: pd.DataFrame, alerts: list[str], path: Path) -> None:
+    """每次运行把当时算出的结果追加一行,作为不改写的历史快照(同一天重复运行只保留最后一次)。"""
+    v = sc.dropna(subset=["liquidity_index"])
+    if v.empty:
+        return
+    last = v.iloc[-1]
+    row = {
+        "run_date": date.today().isoformat(),
+        "data_date": v.index[-1].date().isoformat(),
+        "liquidity_index": last["liquidity_index"],
+        "regime": regime(last["liquidity_index"]),
+        **{p: round(last[p], 3) if pd.notna(last[p]) else None for p in PILLAR_WEIGHTS},
+        "alerts": " | ".join(alerts),
+    }
+    old = pd.read_csv(path) if path.exists() else pd.DataFrame()
+    if not old.empty:
+        old = old[old["run_date"] != row["run_date"]]
+    pd.concat([old, pd.DataFrame([row])], ignore_index=True).to_csv(path, index=False)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="美元流动性综合指标")
     ap.add_argument("--out", default=str(Path(__file__).resolve().parent / "output"))
     ap.add_argument("--offline", action="store_true", help="只用本地缓存")
+    ap.add_argument("--dashboard", default=str(Path(__file__).resolve().parent / "docs" / "index.html"),
+                    help="仪表盘 HTML 输出路径")
     args = ap.parse_args(argv)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -516,6 +547,14 @@ def main(argv=None) -> int:
     hist = sc[["liquidity_index", "composite_z", *PILLAR_WEIGHTS]].join(sc.filter(like="z_"))
     hist.dropna(subset=["liquidity_index"]).to_csv(out / "liquidity_history.csv", float_format="%.3f")
     rp = write_report(f, sc, alerts, cal, out)
+    append_daily_log(sc, f, alerts, out / "daily_log.csv")
+    try:
+        from dashboard import write_dashboard
+        dash = Path(args.dashboard)
+        write_dashboard(f, sc, alerts, cal, dash, out / "daily_log.csv")
+        print(f"仪表盘: {dash}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[警告] 仪表盘生成失败: {e}", file=sys.stderr)
 
     li = sc["liquidity_index"].dropna()
     print(f"\n综合流动性指数 {li.index[-1].date() if len(li) else '-'}: "

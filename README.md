@@ -16,6 +16,12 @@ python3 liquidity_monitor.py
 - `raw_data.csv`:对齐后的原始数据
 - `cache/`:下载缓存,某个数据源临时失败时会自动用缓存
 
+## 可视化仪表盘
+
+每次运行都会生成 `docs/index.html`:综合指数历史走势(1 年 / 3 年 / 5 年 / 全部)、五大支柱、任意单项指标、任意两天对比、今日各序列贡献、每日运行记录。开启 GitHub Pages(Settings → Pages → Branch: main, 文件夹 /docs)后可用网址直接打开;否则下载该文件用浏览器打开。
+
+`output/daily_log.csv` 每次运行追加一行当时的计算结果,不会被改写,用于回看“当时看到的是什么”。
+
 ## 每天自动运行
 
 本仓库用 GitHub Actions(`.github/workflows/daily.yml`)在每个工作日 UTC 23:30(北京时间次日 7:30)自动运行,结果提交到 `output/`。最新报告见 [output/report_latest.md](output/report_latest.md)。在 Actions 页面点 Run workflow 可随时手动运行。
