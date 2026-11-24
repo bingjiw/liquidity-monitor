@@ -83,6 +83,52 @@ def rules(idx, F, S, spy):
     return R, extra
 
 
+# 页面上用的短名和说明,顺序与 rules() 一致
+RULE_META = [
+    ("bh", "买入持有", "一直满仓,作为基准。"),
+    ("lvl", "综合指数·水平", "综合指数 20 日均值低于 35 连续 20 天 → 半仓;高于 50 连续 20 天 → 满仓。"),
+    ("trd", "综合指数·趋势", "综合指数 20 日均值比自己一年均值低 5 分以上连续 20 天 → 半仓;高 5 分以上连续 20 天 → 满仓。"),
+    ("nl", "净流动性(推荐)", "净流动性(联储总资产 − TGA − 逆回购)13 周变化连续 20 天为负 → 半仓;连续 20 天为正 → 满仓。"),
+    ("nlr", "净流动性 + 利率冲击", "净流动性收缩扣 25%,5 年美债 13 周上升超过 0.75 个百分点再扣 25%(100% / 75% / 50%)。"),
+    ("ma", "参考·200 日线", "SPY 跌破 200 日均线连续 5 天 → 半仓;站回 5 天 → 满仓。纯价格趋势,不看流动性。"),
+]
+FWD = 63  # “之后三个月”= 63 个交易日
+
+
+def simulate(pos: pd.Series, r: pd.Series, cash: pd.Series, px: pd.Series) -> dict:
+    """单条规则的资金曲线、逐年收益、每段操作结果、各状态下之后三个月的表现。"""
+    p = pos.shift(1).fillna(1.0)
+    ret = p * r + (1 - p) * cash - p.diff().abs().fillna(0) * COST
+    eq = (1 + ret).cumprod()
+    yearly = {str(y): round(float((1 + g).prod() - 1), 4) for y, g in ret.groupby(ret.index.year)}
+    # 每段持仓:从一次切换到下一次切换
+    seg, start = [], pos.index[0]
+    chg = list(pos.index[pos.diff().fillna(0) != 0]) + [None]
+    for end in chg:
+        sl = slice(start, end) if end is None else slice(start, pos.index[pos.index.get_loc(end) - 1])
+        rr, cc = r[sl], cash[sl]
+        a_ret, c_ret = float((1 + rr).prod() - 1), float((1 + cc).prod() - 1)
+        level = float(pos[start])
+        # 减仓段:股票跑输现金才算判断对;满仓段:股票跑赢现金才算对
+        right = (a_ret < c_ret) if level < 1 else (a_ret >= c_ret)
+        seg.append({"start": start.strftime("%Y-%m-%d"), "end": (pos.index[-1] if end is None else pos.index[pos.index.get_loc(end) - 1]).strftime("%Y-%m-%d"),
+                    "pos": level, "asset": round(a_ret, 4), "cash": round(c_ret, 4), "right": bool(right),
+                    "open": end is None})
+        if end is not None:
+            start = end
+    fwd = px.shift(-FWD) / px - 1
+    states = {}
+    for lab, mask in [("full", pos >= 1), ("reduced", pos < 1)]:
+        x = fwd[mask].dropna()
+        states[lab] = {"days": int(mask.sum()), "avg": round(float(x.mean()), 4) if len(x) else None,
+                       "up": round(float((x > 0).mean()), 4) if len(x) else None,
+                       "bad": round(float((x < -0.10).mean()), 4) if len(x) else None}
+    closed = [g for g in seg[1:] if not g["open"]]  # 第一段是起始默认满仓,不算一次判断
+    return {"equity": [round(float(v), 4) for v in eq], "yearly": yearly, "segments": seg,
+            "states": states, "hit": round(sum(g["right"] for g in closed) / len(closed), 4) if closed else None,
+            "n_closed": len(closed)}
+
+
 def perf(pos: pd.Series, r: pd.Series, cash: pd.Series, a: str, b: str) -> dict:
     p = pos.shift(1).fillna(1.0)
     ret = (p * r + (1 - p) * cash - p.diff().abs().fillna(0) * COST)[a:b]
@@ -171,8 +217,28 @@ def run(f: pd.DataFrame | None = None, out: Path = ROOT / "output") -> dict:
                   for n, m in res["SPY"]["全期"].items()],
         "table_oos": [{"rule": n, **{k: (round(v, 4) if isinstance(v, float) else v) for k, v in m.items()}}
                       for n, m in res["SPY"]["样本外 2023-01~至今"].items()],
+        "rules": [],
         "params": {"nl_win": NL_WIN, "rate_win": RATE_WIN, "rate_jump": RATE_JUMP, "confirm": CONFIRM, "step": STEP},
     }
+    # 每条规则的完整模拟(SPY 和 QQQ)
+    pos_list = list(R.values())
+    for (key, short, desc), pos_r in zip(RULE_META, pos_list):
+        item = {"key": key, "name": short, "desc": desc,
+                "position": [float(x) for x in pos_r], "assets": {}}
+        for sym, r in rets.items():
+            px = (1 + r).cumprod()
+            sim = simulate(pos_r, r, cash, px)
+            sim["stats"] = {}
+            for lab, a, b in PERIODS:
+                pf = perf(pos_r, r, cash, a, b)
+                pf["const"] = const_benchmark(pf["exposure"], r, cash, a, b)
+                sim["stats"][lab] = {k: (round(float(v), 4) if isinstance(v, (float, np.floating)) else v) for k, v in pf.items()}
+            item["assets"][sym] = sim
+        j["rules"].append(item)
+    j["periods"] = [lab for lab, _, _ in PERIODS]
+    j["split"] = SPLIT
+    qqq = pd.read_csv(ROOT / "output" / "market.csv", index_col=0, parse_dates=True)["QQQ"].reindex(idx).ffill()
+    j["qqq"] = [None if pd.isna(x) else round(float(x), 2) for x in qqq]
     (out / "backtest.json").write_text(json.dumps(j, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     return j
 
