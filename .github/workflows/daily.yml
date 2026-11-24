@@ -19,6 +19,9 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pandas requests
+      - name: Fetch SPY/QQQ prices for the calibrated signal
+        run: python backtest/fetch_market.py
+        continue-on-error: true
       - run: python liquidity_monitor.py --out output
       - name: Commit results
         run: |

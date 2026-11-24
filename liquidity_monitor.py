@@ -566,10 +566,19 @@ def main(argv=None) -> int:
     hist.dropna(subset=["liquidity_index"]).to_csv(out / "liquidity_history.csv", float_format="%.3f")
     rp = write_report(f, sc, alerts, cal, out)
     append_daily_log(sc, f, alerts, out / "daily_log.csv")
+    bt = None
+    if (out / "market.csv").exists():
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent / "backtest"))
+            from backtest import run as run_backtest
+            bt = run_backtest(f, out)
+            print(f"历史校准信号: 建议仓位 {bt['now']['position']:.0%}(净流动性 13 周变化 {bt['now']['net_liq_chg']:+.0f} 十亿)")
+        except Exception as e:  # noqa: BLE001
+            print(f"[警告] 回测信号生成失败: {e}", file=sys.stderr)
     try:
         from dashboard import write_dashboard
         dash = Path(args.dashboard)
-        write_dashboard(f, sc, alerts, cal, dash, out / "daily_log.csv")
+        write_dashboard(f, sc, alerts, cal, dash, out / "daily_log.csv", bt)
         print(f"仪表盘: {dash}")
     except Exception as e:  # noqa: BLE001
         print(f"[警告] 仪表盘生成失败: {e}", file=sys.stderr)
