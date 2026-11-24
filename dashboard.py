@@ -55,7 +55,7 @@ def _col(df: pd.DataFrame, c: str, nd: int):
 
 
 def write_dashboard(f: pd.DataFrame, sc: pd.DataFrame, alerts: list[str], cal: pd.DataFrame,
-                    path: Path, log_path: Path) -> None:
+                    path: Path, log_path: Path, bt: dict | None = None) -> None:
     from liquidity_monitor import PILLAR_NAMES, PILLAR_WEIGHTS, SCORED
 
     valid = sc.dropna(subset=["liquidity_index"])
@@ -79,6 +79,7 @@ def write_dashboard(f: pd.DataFrame, sc: pd.DataFrame, alerts: list[str], cal: p
         "alerts": alerts,
         "calendar": [{"date": r.issue_date.strftime("%Y-%m-%d"), "gross_bn": _clean(round(float(r.gross_bn), 1)) if pd.notna(r.gross_bn) else None,
                       "detail": r.detail} for r in cal.itertuples()] if not cal.empty else [],
+        "bt": bt,
         "log": json.loads(pd.read_csv(log_path).to_json(orient="records")) if log_path.exists() else [],
     }
     html = TEMPLATE.replace("__DATA__", json.dumps(data, ensure_ascii=False, separators=(",", ":")))
@@ -159,6 +160,24 @@ th{color:var(--muted);font-weight:600}
       <div class="deltas" id="deltas"></div>
     </div>
     <ul class="alerts" id="alerts"></ul>
+  </div>
+
+  <div class="card" id="btCard">
+    <h2>历史校准信号(净流动性规则)</h2>
+    <div class="hero">
+      <div>
+        <div class="sub">建议股票仓位</div>
+        <div class="big" id="btPos"></div>
+      </div>
+      <div style="flex:1;min-width:260px" id="btNow"></div>
+    </div>
+    <div class="row" style="margin-top:12px" id="btRangeBtns"></div>
+    <div id="cBt" class="chart"></div>
+    <div id="cNl" class="chart" style="height:220px"></div>
+    <div class="note">上图:SPY(对数坐标),红色底色 = 规则建议减到半仓的时段。下图:净流动性(联储总资产 − TGA − 逆回购)13 周变化,十亿美元。规则:13 周变化连续 20 个交易日为负 → 半仓;连续 20 个交易日为正 → 满仓。数据按实际公布时间滞后,次日执行。</div>
+    <h2 style="margin-top:18px">回测成绩(SPY,2019-03 至今)</h2>
+    <div class="scroll"><table id="btTable"></table></div>
+    <div class="note">“同仓位对照”= 一直持有和该规则平均仓位相同比例的 SPY。样本外 = 2023 年以后,规则参数没有用这段数据调过。综合指数本身的水平和趋势规则没有跑赢同仓位对照,所以综合指数只作环境参考,不直接用于加减仓。完整报告见仓库 output/backtest_summary.md。历史表现不代表未来。</div>
   </div>
 
   <div class="card">
@@ -302,6 +321,49 @@ function drawRaw(){
 sel.onchange = drawRaw;
 drawRaw();
 setRange(756);
+
+// 历史校准信号
+if (!D.bt){ document.getElementById("btCard").style.display = "none"; }
+else {
+  const B = D.bt, now = B.now;
+  document.getElementById("btPos").textContent = Math.round(now.position * 100) + "%";
+  const low = now.position < 1, need = Math.max(0, now.confirm - now.streak);
+  const turn = low
+    ? (now.net_liq_chg > 0 ? `净流动性 13 周变化已连续 ${now.streak} 个交易日为正,再 ${need} 天仍为正即恢复满仓。` : `净流动性仍在收缩,维持半仓。`)
+    : (now.net_liq_chg < 0 ? `净流动性 13 周变化已连续 ${now.streak} 个交易日为负,再 ${need} 天仍为负即减到半仓。` : `净流动性在扩张,维持满仓。`);
+  document.getElementById("btNow").innerHTML =
+    `<div>截至 ${now.date}:净流动性 13 周变化 <b class="${now.net_liq_chg >= 0 ? "pos" : "neg"}">${now.net_liq_chg >= 0 ? "+" : ""}${fmt(now.net_liq_chg, 0)}</b> 十亿美元。</div>` +
+    `<div style="margin-top:6px">${turn}</div>` +
+    `<div class="sub" style="margin-top:6px">辅助观察:5 年美债 13 周变化 ${now.ust5_chg >= 0 ? "+" : ""}${fmt(now.ust5_chg, 2)} 个百分点${now.rate_ok ? "" : "(利率冲击中,注意风险)"}。</div>`;
+  // 半仓时段画成红色底色
+  const segs = []; let s0 = null;
+  B.position.forEach((p, i) => {
+    if (p < 1 && s0 == null) s0 = i;
+    if ((p >= 1 || i === B.position.length - 1) && s0 != null){ segs.push([B.dates[s0], B.dates[i]]); s0 = null; }
+  });
+  const shp = segs.map(([a, b]) => ({type:"rect", xref:"x", yref:"paper", x0:a, x1:b, y0:0, y1:1, fillcolor: css("--band-tight"), line:{width:0}, layer:"below"}));
+  Plotly.newPlot("cBt", [{x: B.dates, y: B.spy, type:"scatter", mode:"lines", line:{color: css("--accent"), width:1.8},
+    hovertemplate: "SPY %{y:,.0f}<extra></extra>"}],
+    baseLayout({shapes: shp, yaxis: {type:"log", gridcolor: css("--grid")}}), cfg);
+  Plotly.newPlot("cNl", [{x: B.dates, y: B.net_liq_chg, type:"bar",
+    marker:{color: B.net_liq_chg.map(v => v == null ? css("--neutral") : v >= 0 ? css("--loose") : css("--tight"))},
+    hovertemplate: "%{y:+,.0f} 十亿<extra></extra>"}],
+    baseLayout({shapes: shp, bargap: 0, yaxis: {gridcolor: css("--grid"), zerolinecolor: css("--muted")}}), cfg);
+  const bn = B.dates.length, brb = document.getElementById("btRangeBtns");
+  const setBt = n => {
+    const x0 = n ? B.dates[Math.max(0, bn - n)] : B.dates[0], x1 = B.dates[bn - 1];
+    ["cBt","cNl"].forEach(id => Plotly.relayout(id, {"xaxis.range": [x0, x1]}));
+    [...brb.children].forEach(b => b.classList.toggle("on", +b.dataset.n === n));
+  };
+  [["1年",252],["3年",756],["全部",0]].forEach(([t,n]) => { const b = document.createElement("button"); b.textContent = t; b.dataset.n = n; b.onclick = () => setBt(n); brb.appendChild(b); });
+  setBt(0);
+  const pct = v => v == null ? "—" : (v * 100).toFixed(1) + "%";
+  const oos = Object.fromEntries(B.table_oos.map(r => [r.rule, r]));
+  document.getElementById("btTable").innerHTML =
+    `<tr><th>规则</th><th>年化</th><th>同仓位对照</th><th>最大回撤</th><th>平均仓位</th><th>样本外年化</th><th>样本外对照</th></tr>` +
+    B.table.map(r => `<tr><td>${r.rule}</td><td>${pct(r.cagr)}</td><td>${pct(r.const)}</td><td>${pct(r.maxdd)}</td><td>${Math.round(r.exposure*100)}%</td>` +
+      `<td>${pct(oos[r.rule]?.cagr)}</td><td>${pct(oos[r.rule]?.const)}</td></tr>`).join("");
+}
 
 // 两天对比
 const dA = document.getElementById("dA"), dB = document.getElementById("dB");

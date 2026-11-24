@@ -20,10 +20,11 @@ jobs:
           python-version: "3.12"
       - run: pip install pandas requests
       - run: python backtest/fetch_market.py
+      - run: python backtest/backtest.py
       - name: Commit results
         run: |
           git config user.name "liquidity-bot"
           git config user.email "liquidity-bot@users.noreply.github.com"
-          git add output/market.csv
-          git diff --cached --quiet || git commit -m "Update market prices $(date -u +%F)"
+          git add output/market.csv output/backtest_summary.md output/signals.csv output/backtest.json
+          git diff --cached --quiet || git commit -m "Update market prices and backtest $(date -u +%F)"
           git push
