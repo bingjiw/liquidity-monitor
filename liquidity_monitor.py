@@ -237,9 +237,23 @@ def fetch_settlement_calendar(days: int = 30) -> pd.DataFrame:
             rows.append({k: x.get(k) for k in ("issue_date", "security_type", "security_term", "offering_amt")})
     except Exception as e:  # noqa: BLE001
         print(f"[警告] 即将拍卖数据获取失败: {e}", file=sys.stderr)
+    # TreasuryDirect 的已公告待发行列表(财政部数据集常常没有未来记录)
+    for kind in ("upcoming", "announced"):
+        try:
+            params = {"format": "json"} if kind == "upcoming" else {"format": "json", "days": 14}
+            r = _get(f"https://www.treasurydirect.gov/TA_WS/securities/{kind}", params)
+            got = r.json()
+            print(f"  TreasuryDirect {kind}: {len(got)} 条")
+            for x in got:
+                rows.append({"issue_date": (x.get("issueDate") or "")[:10],
+                             "security_type": x.get("securityType"),
+                             "security_term": x.get("securityTerm"),
+                             "offering_amt": x.get("offeringAmount")})
+        except Exception as e:  # noqa: BLE001
+            print(f"[警告] TreasuryDirect {kind} 获取失败: {e}", file=sys.stderr)
     if not rows:
         return pd.DataFrame(columns=["issue_date", "gross_bn", "detail"])
-    df = pd.DataFrame(rows).drop_duplicates()
+    df = pd.DataFrame(rows).drop_duplicates(subset=["issue_date", "security_term", "offering_amt"])
     df["offering_amt"] = df["offering_amt"].replace({"null": None, "": None})
     df["issue_date"] = pd.to_datetime(df["issue_date"], errors="coerce")
     df["offering_amt"] = pd.to_numeric(df["offering_amt"], errors="coerce")
