@@ -139,7 +139,7 @@ ALERTS = {
 }
 
 TIMEOUT = 30
-HEADERS = {"User-Agent": "liquidity-monitor/1.0 (research script)"}
+HEADERS: dict = {}  # FRED stalls requests with custom User-Agents; use the requests default
 
 # ---------------------------------------------------------------------------
 # 数据抓取
