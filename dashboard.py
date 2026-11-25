@@ -164,12 +164,29 @@ select{max-width:100%}
 .chk{margin:4px 0}
 .verdict{border-left:3px solid var(--accent);padding:6px 10px;margin:8px 0;background:var(--bg);border-radius:4px;font-size:14px}
 details{margin-top:10px} summary{cursor:pointer;color:var(--accent)}
+.gbox{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}
+.gstat{font-size:22px;font-weight:700;padding:4px 12px;border-radius:8px;color:#fff}
+.abar{display:flex;height:30px;border-radius:6px;overflow:hidden;margin:10px 0 4px;font-size:12px;color:#fff;font-weight:600}
+.abar div{display:flex;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden}
+.alab{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px}
+.alab i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>美元流动性仪表盘</h1>
   <div class="sub" id="asof"></div>
+
+  <div class="card" id="guideCard">
+    <h2>操作指引(综合组合:比特币 + 美股 + 美债 + 现金)</h2>
+    <div class="gbox"><div><div class="sub" id="gdDate"></div><div style="margin-top:4px"><span class="gstat" id="gdStat"></span></div></div>
+      <div class="sub" id="gdEq" style="text-align:right"></div></div>
+    <div class="abar" id="gdBar"></div>
+    <div class="alab" id="gdLab"></div>
+    <div class="sub" id="gdWhy" style="margin-top:6px"></div>
+    <div id="cGuide" class="chart" style="height:380px;margin-top:6px"></div>
+    <div class="note">把鼠标移到图上任意一天(手机上点一下),上面就显示那一天的操作建议;移开或在最右端就是今天的建议。上图:流动性综合指数 20 日均值,红区 = 低于 35,绿区 = 高于 50。下图:每天各资产的建议比例。规则:20 日均值低于 35 连续 20 天 → 比特币和股票各减一半放现金;高于 50 连续 20 天 → 恢复;美债不动。比例是假设的,只是规则输出,不是投资建议。</div>
+  </div>
 
   <div class="card">
     <div class="hero">
@@ -605,6 +622,43 @@ else {
   document.getElementById("cReplay").on("plotly_click", ev => { if (ev.points && ev.points[0]){ rp.date = String(ev.points[0].x).slice(0, 10); snap(); } });
 }
 
+
+
+// 首页操作指引
+if (!D.bt || !D.bt.portfolio || !D.bt.portfolio.guide){ document.getElementById("guideCard").style.display = "none"; }
+else {
+  const G = D.bt.portfolio.guide, names = Object.keys(G.alloc), n = G.dates.length;
+  const AC = {"比特币": "--p2", "美股 VTI": "--p1", "海外股 VXUS": "--p5", "美债 IEF": "--p4", "现金 SGOV": "--neutral"};
+  const col = k => css(AC[k] || "--muted");
+  const show = i => {
+    const full = G.sig[i] >= 1, sm = G.sm[i];
+    document.getElementById("gdDate").textContent = i === n - 1 ? `今天的建议(数据到 ${G.dates[i]})` : `历史上 ${G.dates[i]} 的建议`;
+    const st = document.getElementById("gdStat");
+    st.textContent = full ? "正常持有(满仓)" : "风险资产减半";
+    st.style.background = full ? css("--loose") : css("--tight");
+    document.getElementById("gdBar").innerHTML = names.map(k => { const v = G.alloc[k][i]; return v > 0.005 ? `<div style="width:${v*100}%;background:${col(k)}">${v >= 0.08 ? (v*100).toFixed(0) + "%" : ""}</div>` : ""; }).join("");
+    document.getElementById("gdLab").innerHTML = names.map(k => `<span><i style="background:${col(k)}"></i>${k} <b>${(G.alloc[k][i]*100).toFixed(0)}%</b></span>`).join("");
+    const smt = sm == null ? "—" : sm.toFixed(1);
+    let run = 0; for (let j = i; j >= 0 && G.sm[j] != null && (full ? G.sm[j] < 35 : G.sm[j] > 50); j--) run++;
+    document.getElementById("gdWhy").textContent = full
+      ? `流动性综合指数 20 日均值 ${smt}。` + (run > 0 ? `已连续 ${run} 天低于 35,再 ${Math.max(20 - run, 0)} 天仍低于 35 就减仓。` : `连续 20 天低于 35 才会减仓。`)
+      : `流动性综合指数 20 日均值 ${smt},之前连续 20 天低于 35 → 减半。` + (run > 0 ? `已连续 ${run} 天高于 50,再 ${Math.max(20 - run, 0)} 天就恢复满仓。` : `要连续 20 天高于 50 才恢复满仓。`);
+    const t = G.eq_timed[i], h = G.eq_hold[i];
+    document.getElementById("gdEq").innerHTML = `2024-01-11 投入 1 元,到这天<br>按指引 <b>${t.toFixed(2)}</b> 元 · 一直持有 <b>${h.toFixed(2)}</b> 元`;
+  };
+  const zone = (a, b, c) => ({type:"rect", xref:"paper", yref:"y", x0:0, x1:1, y0:a, y1:b, fillcolor: css(c), line:{width:0}, layer:"below"});
+  const lowB = []; let s0 = null;
+  G.sig.forEach((p, i) => { if (p < 1 && s0 == null) s0 = i; if ((p >= 1 || i === n - 1) && s0 != null){ lowB.push({type:"rect", xref:"x", yref:"paper", x0:G.dates[s0], x1:G.dates[i], y0:0, y1:1, fillcolor: css("--tight"), opacity:0.07, line:{width:0}, layer:"below"}); s0 = null; } });
+  const tr = [{x: G.dates, y: G.sm, type:"scatter", mode:"lines", line:{color: css("--ink"), width:1.8}, name:"综合指数 20 日均值", hovertemplate:"指数均值 %{y:.1f}<extra></extra>"}];
+  names.forEach(k => tr.push({x: G.dates, y: G.alloc[k], type:"scatter", mode:"lines", stackgroup:"a", line:{width:0.5, color: col(k)}, fillcolor: col(k), name:k, xaxis:"x", yaxis:"y2", hovertemplate: k + " %{y:.0%}<extra></extra>"}));
+  Plotly.newPlot("cGuide", tr, baseLayout({grid:{rows:2, columns:1, roworder:"top to bottom"}, shapes:[zone(0,35,"--band-tight"), zone(50,100,"--band-loose"), ...lowB],
+    yaxis:{domain:[0.62,1], range:[15,75], gridcolor: css("--grid"), title:{text:"指数"}}, yaxis2:{domain:[0,0.56], range:[0,1], tickformat:".0%", gridcolor: css("--grid"), title:{text:"建议比例"}},
+    xaxis:{type:"date", gridcolor: css("--grid"), anchor:"y2"}, showlegend:false, margin:{l:56, r:16, t:6, b:30}}), cfg);
+  show(n - 1);
+  const el = document.getElementById("cGuide");
+  el.on("plotly_hover", ev => { const x = String(ev.points[0].x).slice(0, 10); const i = G.dates.indexOf(x); if (i >= 0) show(i); });
+  el.on("plotly_unhover", () => show(n - 1));
+}
 
 // 综合组合
 if (!D.bt || !D.bt.portfolio){ document.getElementById("pfCard").style.display = "none"; }

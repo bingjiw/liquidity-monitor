@@ -92,7 +92,7 @@ def _boot(rets: dict, n=5000, horizon=252, block=63, seed=7) -> dict:
     return out
 
 
-def run(idx, cash, R_rules: dict) -> dict | None:
+def run(idx, cash, R_rules: dict, sm: pd.Series | None = None) -> dict | None:
     from pathlib import Path
     m = pd.read_csv(Path(__file__).resolve().parent.parent / "output" / "market.csv", index_col=0, parse_dates=True)
     m = m[~m.index.duplicated(keep="last")]
@@ -142,6 +142,13 @@ def run(idx, cash, R_rules: dict) -> dict | None:
                    "periods": [p[0] for p in periods], "rows": lrows,
                    "boot": _boot({k: dl[k][LONG_START:] for k in list(dl)[:2]})}
 
+    # 首页操作指引图:每天的目标比例、信号、综合指数 20 日均值、到当天为止的资金
+    sg = sigs["① 综合指数(主方案)"][on]
+    wd = _weights(sigs["① 综合指数(主方案)"], WEIGHTS)[on]
+    res["guide"] = {"dates": res["btc_era"]["dates"], "sig": [float(v) for v in sg],
+                    "sm": [None if sm is None or pd.isna(v) else round(float(v), 1) for v in (sm[on] if sm is not None else sg * np.nan)],
+                    "alloc": {NAMES[k]: [round(float(v), 3) for v in wd[k]] for k in wd.columns},
+                    "eq_timed": eqs["① 综合指数(主方案)"], "eq_hold": eqs["一直持有(不择时)"]}
     # 今天的建议比例(主方案)
     wt = _weights(sigs["① 综合指数(主方案)"], WEIGHTS).iloc[-1]
     res["today"] = {"signal": float(sigs["① 综合指数(主方案)"].iloc[-1]), "date": idx[-1].strftime("%Y-%m-%d"),
