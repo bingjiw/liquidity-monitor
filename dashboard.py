@@ -200,6 +200,7 @@ details{margin-top:10px} summary{cursor:pointer;color:var(--accent)}
     <h2>历史回放:每个阶段仪表盘怎么说、指引怎么变、结果如何</h2>
     <div class="sub">从上到下:① 当时能看到的综合指数(按数据公布滞后重算);② 净流动性 13 周变化;③ 规则给出的建议仓位;④ 按指引操作 vs 一直满仓的资金曲线。点图上任意一天,或在下面选日期,看那一天的完整读数。</div>
     <div class="row" style="margin-top:10px" id="rpAsset"></div>
+    <div class="row" id="rpRule"></div>
     <div id="cReplay" class="chart" style="height:680px"></div>
     <div class="row" style="margin-top:6px"><label>回放日期 <input type="date" id="rpDate"></label>
       <button data-rp="2008-09-15">2008 雷曼</button><button data-rp="2015-08-24">2015 人民币</button><button data-rp="2018-12-24">2018 缩表</button>
@@ -509,13 +510,18 @@ else {
 if (!D.bt || !D.bt.index_pit){ document.getElementById("replayCard").style.display = "none"; }
 else {
   const B = D.bt, nl = B.rules.find(r => r.key === "nl"), bh = B.rules.find(r => r.key === "bh");
-  const rp = {asset: "SPY", date: null};
+  const rp = {asset: "SPY", date: null, rule: "nl"};
+  const cur = () => B.rules.find(r => r.key === rp.rule) || nl;
+  const rpRules = document.getElementById("rpRule");
+  B.rules.filter(r => ["nl","lvl","combo"].includes(r.key)).forEach(r => { const b = document.createElement("button"); b.textContent = r.name; b.dataset.v = r.key; b.onclick = () => { rp.rule = r.key; snap(); }; rpRules.appendChild(b); });
   const bi = dstr => { let lo = 0, hi = B.dates.length - 1, a = 0; while (lo <= hi){ const m = (lo + hi) >> 1; if (B.dates[m] <= dstr){ a = m; lo = m + 1; } else hi = m - 1; } return a; };
   const pc = (v, s = true) => v == null || isNaN(v) ? "—" : (s && v >= 0 ? "+" : "") + (v * 100).toFixed(1) + "%";
   const rpChips = document.getElementById("rpAsset");
   [["SPY","标普 500(SPY)"],["QQQ","纳斯达克 100(QQQ)"]].forEach(([v,t]) => { const b = document.createElement("button"); b.textContent = t; b.dataset.v = v; b.onclick = () => { rp.asset = v; snap(); }; rpChips.appendChild(b); });
   function drawReplay(){
     [...rpChips.children].forEach(b => b.classList.toggle("on", b.dataset.v === rp.asset));
+    [...rpRules.children].forEach(b => b.classList.toggle("on", b.dataset.v === rp.rule));
+    const nl = cur();
     const eR = nl.assets[rp.asset].equity, eB = bh.assets[rp.asset].equity;
     const dom = [[0.78,1],[0.53,0.74],[0.30,0.49],[0,0.26]];
     const yax = (i, extra = {}) => Object.assign({domain: dom[i], gridcolor: css("--grid"), zerolinecolor: css("--muted")}, extra);
@@ -540,6 +546,7 @@ else {
     const dI = document.getElementById("rpDate");
     if (!rp.date) rp.date = B.dates[B.dates.length - 1];
     dI.value = rp.date;
+    const nl = cur();
     const i = bi(rp.date), d = B.dates[i], k = idxOnOrBefore(d), last = B.dates.length - 1;
     const px = rp.asset === "SPY" ? B.spy : B.qqq, eR = nl.assets[rp.asset].equity, eB = bh.assets[rp.asset].equity;
     const [rn] = regime(B.index_pit[i]);
@@ -547,7 +554,7 @@ else {
     h += `<tr><td>综合指数(当时可见)</td><td>${fmt(B.index_pit[i])}(${rn})</td></tr>`;
     if (k >= 0) pk.forEach(p => h += `<tr><td>${D.pillars[p].name}</td><td class="${D.pillars[p].z[k] >= 0 ? "pos" : "neg"}">${fmt(D.pillars[p].z[k], 2)}</td></tr>`);
     h += `<tr><td>净流动性 13 周变化</td><td class="${B.net_liq_chg[i] >= 0 ? "pos" : "neg"}">${fmt(B.net_liq_chg[i], 0)} 十亿</td></tr>`;
-    h += `<tr><td><b>建议仓位</b></td><td><b>${Math.round(nl.position[i] * 100)}%</b></td></tr>`;
+    h += `<tr><td><b>建议仓位(${nl.name})</b></td><td><b>${Math.round(nl.position[i] * 100)}%</b></td></tr>`;
     let st = i; while (st > 0 && nl.position[st - 1] === nl.position[i]) st--;
     let en = i; while (en < last && nl.position[en + 1] === nl.position[i]) en++;
     h += `<tr><td>这个仓位从哪天持续到哪天</td><td>${B.dates[st]} → ${en === last ? "至今" : B.dates[en]}(${en - st + 1} 个交易日)</td></tr>`;
