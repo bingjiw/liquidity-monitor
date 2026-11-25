@@ -208,6 +208,20 @@ details{margin-top:10px} summary{cursor:pointer;color:var(--accent)}
     <div class="grid2"><div class="scroll"><table id="rpSnap"></table></div><div class="scroll"><table id="rpAfter"></table></div></div>
   </div>
 
+  <div class="card" id="btcCard">
+    <h2>比特币与流动性(只看 2024-01 现货 ETF 上市之后)</h2>
+    <div class="sub">机构通过 ETF 大举买入之后,比特币才更像一项受美元流动性影响的资产;更早的“小圈子时代”不纳入。样本不到 3 年,只能当参考。</div>
+    <div id="cBtc" class="chart" style="height:320px;margin-top:8px"></div>
+    <div class="note">蓝线 = 比特币价格(对数,右轴);柱 = 净流动性 13 周变化(十亿美元,左轴);红色底色 = 净流动性规则 ③ 半仓的时段。</div>
+    <h3 style="margin:14px 0 4px">按流动性择时 vs 一直满仓(2024-01-11 起,1 元起步)</h3>
+    <div id="cBtcEq" class="chart" style="height:300px"></div>
+    <div class="scroll"><table id="btcPerf"></table></div>
+    <div class="note">信号次日执行,每次调仓扣 0.05%,空仓部分拿联邦基金利率。择时增益 = 年化 − 一直持有同等平均仓位的年化。只有 3–5 次调仓,运气成分很大。</div>
+    <div id="cBtcCorr" class="chart" style="height:200px"></div>
+    <div class="note">比特币与纳指 100 的 60 日收益相关性(2020 年起,虚线 = ETF 上市)。相关性越高,比特币越像“高波动的科技股”,越受同一股流动性驱动。</div>
+    <div id="btcVerdict"></div>
+  </div>
+
   <div class="card" id="watchCard">
     <h2>管道与砍仓观察(未经回测验证,不进仓位规则)</h2>
     <div class="grid3">
@@ -517,7 +531,8 @@ else {
   const bi = dstr => { let lo = 0, hi = B.dates.length - 1, a = 0; while (lo <= hi){ const m = (lo + hi) >> 1; if (B.dates[m] <= dstr){ a = m; lo = m + 1; } else hi = m - 1; } return a; };
   const pc = (v, s = true) => v == null || isNaN(v) ? "—" : (s && v >= 0 ? "+" : "") + (v * 100).toFixed(1) + "%";
   const rpChips = document.getElementById("rpAsset");
-  [["SPY","标普 500(SPY)"],["QQQ","纳斯达克 100(QQQ)"]].forEach(([v,t]) => { const b = document.createElement("button"); b.textContent = t; b.dataset.v = v; b.onclick = () => { rp.asset = v; snap(); }; rpChips.appendChild(b); });
+  [["SPY","标普 500(SPY)"],["QQQ","纳斯达克 100(QQQ)"], ...(B.btc ? [["BTC","比特币(ETF 上市后)"]] : [])].forEach(([v,t]) => { const b = document.createElement("button"); b.textContent = t; b.dataset.v = v;
+    b.onclick = () => { rp.asset = v; if (v === "BTC" && (!rp.date || rp.date < B.btc_start)) rp.date = B.dates[B.dates.length - 1]; snap(); }; rpChips.appendChild(b); });
   function drawReplay(){
     [...rpChips.children].forEach(b => b.classList.toggle("on", b.dataset.v === rp.asset));
     [...rpRules.children].forEach(b => b.classList.toggle("on", b.dataset.v === rp.rule));
@@ -540,7 +555,8 @@ else {
     Plotly.react("cReplay", tr, baseLayout({showlegend: true, legend:{orientation:"h", y:-0.06}, bargap:0, margin:{l:56, r:16, t:10, b:30},
       shapes: [...bandsY, ...lowBands, ...vline],
       yaxis: yax(0, {range:[0,100], title:{text:"指数"}}), yaxis2: yax(1, {title:{text:"十亿"}}),
-      yaxis3: yax(2, {range:[-5,105], title:{text:"仓位%"}}), yaxis4: yax(3, {type:"log", title:{text:"资金"}})}), cfg);
+      yaxis3: yax(2, {range:[-5,105], title:{text:"仓位%"}}), yaxis4: yax(3, {type:"log", title:{text:"资金"}}),
+      xaxis: {gridcolor: css("--grid"), type:"date", range: rp.asset === "BTC" ? [B.btc_start, B.dates[B.dates.length - 1]] : [B.dates[0], B.dates[B.dates.length - 1]]}}), cfg);
   }
   function snap(){
     const dI = document.getElementById("rpDate");
@@ -548,7 +564,7 @@ else {
     dI.value = rp.date;
     const nl = cur();
     const i = bi(rp.date), d = B.dates[i], k = idxOnOrBefore(d), last = B.dates.length - 1;
-    const px = rp.asset === "SPY" ? B.spy : B.qqq, eR = nl.assets[rp.asset].equity, eB = bh.assets[rp.asset].equity;
+    const px = rp.asset === "SPY" ? B.spy : rp.asset === "QQQ" ? B.qqq : B.btc, eR = nl.assets[rp.asset].equity, eB = bh.assets[rp.asset].equity;
     const [rn] = regime(B.index_pit[i]);
     let h = `<tr><th colspan="2" style="text-align:left">${d} 当天仪表盘读数</th></tr>`;
     h += `<tr><td>综合指数(当时可见)</td><td>${fmt(B.index_pit[i])}(${rn})</td></tr>`;
@@ -571,6 +587,36 @@ else {
   document.querySelectorAll("button[data-rp]").forEach(b => b.onclick = () => { rp.date = b.dataset.rp; snap(); });
   snap();
   document.getElementById("cReplay").on("plotly_click", ev => { if (ev.points && ev.points[0]){ rp.date = String(ev.points[0].x).slice(0, 10); snap(); } });
+}
+
+// 比特币
+if (!D.bt || !D.bt.btc){ document.getElementById("btcCard").style.display = "none"; }
+else {
+  const B = D.bt, i0 = B.dates.findIndex(d => d >= B.btc_start), nlR = B.rules.find(r => r.key === "nl");
+  const ds = B.dates.slice(i0), sl = a => a.slice(i0);
+  const lowB = []; let s0 = null; const ps = sl(nlR.position);
+  ps.forEach((p, i) => { if (p < 1 && s0 == null) s0 = i; if ((p >= 1 || i === ps.length - 1) && s0 != null){ lowB.push({type:"rect", xref:"x", yref:"paper", x0:ds[s0], x1:ds[i], y0:0, y1:1, fillcolor: css("--tight"), opacity:0.08, line:{width:0}, layer:"below"}); s0 = null; } });
+  Plotly.newPlot("cBtc", [
+    {x: ds, y: sl(B.net_liq_chg), type:"bar", marker:{color: sl(B.net_liq_chg).map(v => v == null ? css("--neutral") : v >= 0 ? css("--loose") : css("--tight"))}, opacity:0.6, name:"净流动性 13 周变化", hovertemplate:"%{y:+,.0f} 十亿<extra></extra>"},
+    {x: ds, y: sl(B.btc), type:"scatter", mode:"lines", line:{color: css("--accent"), width:2}, yaxis:"y2", name:"比特币", hovertemplate:"BTC %{y:,.0f}<extra></extra>"}],
+    baseLayout({shapes: lowB, bargap:0, yaxis:{gridcolor: css("--grid"), zerolinecolor: css("--muted"), title:{text:"十亿美元"}},
+      yaxis2:{overlaying:"y", side:"right", type:"log", showgrid:false, title:{text:"BTC"}}, margin:{l:56, r:56, t:10, b:36}}), cfg);
+  const eqT = [["bh","一直满仓", css("--muted"), "dot"], ["nl","③ 净流动性", css("--p1"), "solid"], ["lvl","① 综合指数水平", css("--p2"), "solid"], ["combo","⑤ ①或③任一减仓", css("--ink"), "solid"]]
+    .map(([k, n, c, dsh]) => { const r = B.rules.find(x => x.key === k); if (!r || !r.assets || !r.assets.BTC) return null;
+      const e = sl(r.assets.BTC.equity), b0 = e.find(v => v != null); return {x: ds, y: e.map(v => v == null ? null : v / b0), type:"scatter", mode:"lines", line:{color:c, width: k === "bh" ? 1.5 : 2, dash:dsh}, name:n, hovertemplate: n + " %{y:.2f}<extra></extra>"}; }).filter(Boolean);
+  Plotly.newPlot("cBtcEq", eqT, baseLayout({yaxis:{gridcolor: css("--grid"), title:{text:"资金(起点 = 1)"}}, showlegend:true, legend:{orientation:"h", y:-0.15}, margin:{l:56, r:16, t:10, b:60}}), cfg);
+  const sec = D.research && D.research.sections.find(s => s.btc_qqq_corr60);
+  if (sec && sec.detail){
+    const h = sec.detail.headers, rows = sec.detail.rows.filter(r => r[0] === "BTC" || r[0] === "MSTR");
+    document.getElementById("btcPerf").innerHTML = "<tr>" + h.map(x => `<th>${x}</th>`).join("") + "</tr>" + rows.map(r => "<tr>" + r.map(x => `<td>${x}</td>`).join("") + "</tr>").join("");
+  }
+  if (sec){
+    const C = sec.btc_qqq_corr60;
+    Plotly.newPlot("cBtcCorr", [{x: C.dates, y: C.v, type:"scatter", mode:"lines", line:{color: css("--p2"), width:1.5}, hovertemplate:"%{y:.2f}<extra></extra>"}],
+      baseLayout({shapes:[{type:"line", xref:"x", yref:"paper", x0:B.btc_start, x1:B.btc_start, y0:0, y1:1, line:{color: css("--muted"), dash:"dot", width:1}}],
+        yaxis:{range:[-0.6,1], gridcolor: css("--grid"), zerolinecolor: css("--muted")}}), cfg);
+    if (sec.verdict) document.getElementById("btcVerdict").innerHTML = `<div class="verdict">${sec.verdict}</div><div class="note">完整数字见下面“新指标历史检验”第 6 节。</div>`;
+  } else document.getElementById("cBtcCorr").style.display = "none";
 }
 
 // 管道与砍仓观察
@@ -627,7 +673,7 @@ else {
     `<div class="note" style="margin-top:0">${s.note}</div>` + tbl(s) +
     (s.summary ? `<div class="sub" style="margin-top:8px">汇总</div>` + tbl(s.summary) : "") +
     (s.diverge ? `<div class="note">黄金在 10 年 TIPS 实际利率 5 日下降时 5 日跌超 2%:共 ${s.diverge.days} 天(${s.diverge.episodes} 段),之后 GLD 20 日 ${s.diverge.gld20}、60 日 ${s.diverge.gld60}(所有日子平均 ${s.diverge.base20} / ${s.diverge.base60})。</div>` : "") +
-    (s.detail ? `<details><summary>最近 15 次大涨明细</summary>${tbl(s.detail)}</details>` : "")
+    (s.detail ? `<details${s.detail_title ? " open" : ""}><summary>${s.detail_title || "最近 15 次大涨明细"}</summary>${tbl(s.detail)}</details>` : "")
   ).join("");
 }
 

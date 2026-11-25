@@ -33,6 +33,7 @@ PERIODS = [("更早样本外 2004~2018", START, "2019-03-14"),
 # 规则参数(事先定的粗档,不做细调):13 周 ≈ 65 个工作日,确认 20 个工作日 ≈ 一个月
 NL_WIN, RATE_WIN, RATE_JUMP, CONFIRM, STEP = 65, 65, 0.75, 20, 0.25
 LOW_POS = 0.5  # 推荐规则在“净流动性收缩”时的仓位
+BTC_START = "2024-01-11"  # 美国现货比特币 ETF 上市首日
 
 
 def persist(bad: pd.Series, good: pd.Series, n: int, bad_pos: float = 0.0) -> pd.Series:
@@ -245,6 +246,18 @@ def run(f: pd.DataFrame | None = None, out: Path = ROOT / "output") -> dict:
     qqq = pd.read_csv(ROOT / "output" / "market.csv", index_col=0, parse_dates=True)["QQQ"].reindex(idx).ffill()
     j["qqq"] = [None if pd.isna(x) else round(float(x), 2) for x in qqq]
     j["index_pit"] = [None if pd.isna(x) else round(float(x), 1) for x in sig["liquidity_index_pit"]]
+    # 比特币:只用现货 ETF 上市(2024-01-11)之后的数据,只给历史回放用,不进上面的成绩表
+    mk = pd.read_csv(ROOT / "output" / "market.csv", index_col=0, parse_dates=True)
+    if "BTC" in mk and mk["BTC"].notna().any():
+        btc = mk["BTC"].reindex(idx).ffill().where(idx >= BTC_START)
+        rb = btc.pct_change().fillna(0)
+        on = idx >= BTC_START
+        j["btc"] = [None if pd.isna(x) else round(float(x), 0) for x in btc]
+        j["btc_start"] = BTC_START
+        for (key, _, _), pos_r, item in zip(RULE_META, pos_list, j["rules"]):
+            eq = (1 + (pos_r.shift(1).fillna(1.0) * rb + (1 - pos_r.shift(1).fillna(1.0)) * cash
+                       - pos_r.diff().abs().fillna(0) * COST).where(on, 0)).cumprod()
+            item["assets"]["BTC"] = {"equity": [round(float(v), 4) if o else None for v, o in zip(eq, on)]}
     (out / "backtest.json").write_text(json.dumps(j, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     return j
 
