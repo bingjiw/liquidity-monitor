@@ -216,9 +216,48 @@ VERDICTS = {
     "cross": "同跌密集期之后,纳指 60 天平均 +9.8%、上涨概率 84%,好于平时的 +5.1%、73%:历史上的无差别砍仓多数接近短期低点,而不是更大下跌的开始。"
              "黄金在同跌之后 60 天 +2.1%,反而低于平时的 +3.9%,所以“砍仓后黄金必然修复”不成立。黄金逆着实际利率下跌之后,20 天 +2.3%(平时 +1.2%),只有短期略好。"
              "样本期 2019–2026 恰好是黄金大牛市,结论偏乐观。",
+    "overlay": "没有一个预警能提高样本外的择时增益(现规则 +2.9%/年),反而让调仓次数翻倍到几十次、判断正确率降到 50% 上下。"
+               "HYG 新低和 VIX ≥30 能把样本外最大回撤从 −16% 压到 −13.5% 和 −14.3%,代价是年化少 0.7–2.3 个百分点。"
+               "逆向的“同跌时加回满仓”样本外年化多 1 个百分点,但择时增益不变(只是平均仓位更高),回撤更大,不可靠。结论:仓位规则维持不变,新指标继续只做观察。",
     "events": "黄金 5 天内上涨 8/11 次、60 天 9/11 次,和视频说的“10 次中 8 次、9 次”基本一致;高收益债 60 天 11/11 全涨;半导体 60 天平均 +16.7% 涨幅最大,但只有 9/11 次上涨,且前 5 天平均是跌的。"
               "“黄金先涨、半导体最后涨最多”大体成立。但其中两次是 2020-03 的极端放水;2025 年的两次(停缩表、RMP)60 天后纳指反而小跌,黄金大涨。",
 }
+
+
+def study_overlay() -> dict:
+    """把新预警当作过滤条件叠加到净流动性规则 ③,看能否提升择时(各扣 25%,参数事先定,不调)。"""
+    import backtest as B
+    idx, F, S, cash, rets, spy = B.load()
+    m = pd.read_csv(ROOT / "output" / "market.csv", index_col=0, parse_dates=True)
+    m = m[~m.index.duplicated(keep="last")]
+    q, g, h = (m[k].reindex(idx).ffill() for k in ("QQQ", "GLD", "HYG"))
+    hold = lambda t, n=20: t.fillna(False).astype(int).rolling(n, min_periods=1).max().astype(bool)  # noqa: E731
+    nl = F["net_liq"].diff(B.NL_WIN)
+    base = B.persist(nl < 0, nl > 0, B.CONFIRM, B.LOW_POS)
+    vix = F["vix"].combine_first(m["VIX_Y"].reindex(idx)) if "VIX_Y" in m else F["vix"]
+    dd = ((g.pct_change() < DD) & (q.pct_change() < DD)).astype(int).rolling(20).sum() >= 2
+    pipe = hold(F["sofr_iorb"] >= 10)
+    cred = hold(h < h.shift(1).rolling(20).min())
+    rules = [("③ 净流动性(现规则)", base),
+             ("③ + 管道 ≥10BP 后 20 天扣 25%", base - 0.25 * pipe),
+             ("③ + HYG 创 20 日新低后 20 天扣 25%", base - 0.25 * cred),
+             ("③ + VIX ≥30 时扣 25%", base - 0.25 * (vix >= 30)),
+             ("③ + 金纳同跌 ≥2 天时扣 25%", base - 0.25 * dd),
+             ("③ + 金纳同跌 ≥2 天时加回满仓(逆向)", base.where(~dd, 1.0)),
+             ("买入持有", pd.Series(1.0, idx))]
+    rows = []
+    for name, pos in rules:
+        pos = pos.clip(0, 1)
+        row = [name]
+        for a, b in (("2019-03-15", "2022-12-31"), ("2023-01-01", "2100-01-01")):
+            p = B.perf(pos, rets["SPY"], cash, a, b)
+            c = B.const_benchmark(p["exposure"], rets["SPY"], cash, a, b)
+            row += [_pct(p["cagr"], 1, False), _pct(p["cagr"] - c), _pct(p["maxdd"]), f"{p['sharpe']:.2f}", p["switches"]]
+        rows.append(row)
+    hd = ["规则"] + [f"{t}{x}" for t in ("样本内 ", "样本外 ") for x in ("年化", "择时增益", "最大回撤", "夏普", "调仓")]
+    return {"title": "5. 把新预警叠加到仓位规则,能否更好(SPY)",
+            "note": "每个预警事先定为“扣 25% 仓位”,不调参数。择时增益 = 年化 − 同等平均仓位的年化。管道数据 2021-07 才有,所以样本内只覆盖 1.5 年。",
+            "headers": hd, "rows": rows}
 
 
 def _md_table(h, rows):
@@ -235,6 +274,10 @@ def run(f: pd.DataFrame | None = None, out: Path = ROOT / "output") -> dict:
     if "GLD" in px:
         sections.append(dict(study_cross(F, px), verdict=VERDICTS["cross"]))
     sections.append(dict(study_events(px), verdict=VERDICTS["events"]))
+    try:
+        sections.append(dict(study_overlay(), verdict=VERDICTS["overlay"]))
+    except Exception as e:  # noqa: BLE001
+        print(f"[警告] 叠加回测失败: {e}", file=sys.stderr)
     L = ["# 新指标历史检验(视频对比讨论的第二批)", "",
          f"数据 {START} ~ {px['SPY'].index[-1].date()}。只做研究,不进仓位规则。样本小的结论只能当参考。", ""]
     for s in sections:
