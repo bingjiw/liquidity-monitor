@@ -17,7 +17,7 @@ RAW_SERIES = {
     "tga":             ("财政部 TGA", "十亿美元", "A 钱的数量", None),
     "rrp":             ("隔夜逆回购", "十亿美元", "A 钱的数量", None),
     "net_liq":         ("净流动性(总资产 − TGA − 逆回购)", "十亿美元", "A 钱的数量", None),
-    "fed_bills_chg":   ("联储持有短债四周变化", "十亿美元", "A 钱的数量", None),
+    "fed_bills_chg":   ("联储持有短债四周变化(含 MBS 再投资,不等于 RMP)", "十亿美元", "A 钱的数量", None),
     "sofr_iorb":       ("SOFR − IORB", "BP", "B 回购管道价格", 10),
     "sofr99_iorb":     ("SOFR99 − IORB", "BP", "B 回购管道价格", 25),
     "tgcr_rrp":        ("TGCR − 逆回购利率", "BP", "B 回购管道价格", None),
@@ -28,6 +28,7 @@ RAW_SERIES = {
     "ig_oas":          ("投资级 OAS", "%", "C 信用价格", None),
     "real_policy_rate":("实际政策利率(EFFR − 核心 PCE)", "%", "D 利率与政策", None),
     "tips5":           ("5 年 TIPS 实际收益率", "%", "D 利率与政策", None),
+    "tips10":          ("10 年 TIPS 实际收益率(观察黄金用,不计分)", "%", "D 利率与政策", None),
     "term_premium":    ("10 年期限溢价", "%", "D 利率与政策", None),
     "core_pce_yoy":    ("核心 PCE 同比", "%", "D 利率与政策", None),
     "vix":             ("VIX", "点", "E 市场压力与美元", None),
@@ -55,8 +56,11 @@ def _col(df: pd.DataFrame, c: str, nd: int):
 
 
 def write_dashboard(f: pd.DataFrame, sc: pd.DataFrame, alerts: list[str], cal: pd.DataFrame,
-                    path: Path, log_path: Path, bt: dict | None = None) -> None:
+                    path: Path, log_path: Path, bt: dict | None = None, w: dict | None = None,
+                    asof: dict | None = None, rs: dict | None = None) -> None:
     from liquidity_monitor import PILLAR_NAMES, PILLAR_WEIGHTS, SCORED
+    from watch import calendar_rows
+    asof = asof or {}
 
     valid = sc.dropna(subset=["liquidity_index"])
     idx = valid.index
@@ -69,7 +73,7 @@ def write_dashboard(f: pd.DataFrame, sc: pd.DataFrame, alerts: list[str], cal: p
         "pillars_used": _col(valid, "pillars_used", 0),
         "pillars": {p: {"name": PILLAR_NAMES[p], "weight": w, "z": _col(valid, p, 2)}
                     for p, w in PILLAR_WEIGHTS.items()},
-        "raw": {k: {"name": n, "unit": u, "group": g, "threshold": t,
+        "raw": {k: {"name": n, "unit": u, "group": g, "threshold": t, "asof": asof.get(k),
                     "v": _col(ff, k, 3)}
                 for k, (n, u, g, t) in RAW_SERIES.items() if k in ff},
         "contrib": [{"pillar": PILLAR_NAMES[p], "name": name,
@@ -77,8 +81,9 @@ def write_dashboard(f: pd.DataFrame, sc: pd.DataFrame, alerts: list[str], cal: p
                      if f"z_{c}" in valid and pd.notna(valid[f"z_{c}"].ffill().iloc[-1]) else None}
                     for c, p, _, name in SCORED],
         "alerts": alerts,
-        "calendar": [{"date": r.issue_date.strftime("%Y-%m-%d"), "gross_bn": _clean(round(float(r.gross_bn), 1)) if pd.notna(r.gross_bn) else None,
-                      "detail": r.detail} for r in cal.itertuples()] if not cal.empty else [],
+        "calendar": calendar_rows(cal, w, 30),
+        "watch": w,
+        "research": rs,
         "bt": bt,
         "log": json.loads(pd.read_csv(log_path).to_json(orient="records")) if log_path.exists() else [],
     }
@@ -143,6 +148,15 @@ th{color:var(--muted);font-weight:600}
 @media (max-width:760px){.grid2{grid-template-columns:1fr}.big{font-size:44px}.chart{height:300px}}
 .note{color:var(--muted);font-size:13px;margin-top:8px}
 .scroll{overflow-x:auto}
+select{max-width:100%}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media (max-width:900px){.grid3{grid-template-columns:1fr}}
+.wbox{background:var(--bg);border-radius:10px;padding:12px;font-size:14px}
+.wbox h3{font-size:14px;margin:0 0 6px;color:var(--muted);font-weight:600}
+.wbox .v{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}
+.chk{margin:4px 0}
+.verdict{border-left:3px solid var(--accent);padding:6px 10px;margin:8px 0;background:var(--bg);border-radius:4px;font-size:14px}
+details{margin-top:10px} summary{cursor:pointer;color:var(--accent)}
 </style>
 </head>
 <body>
@@ -175,6 +189,20 @@ th{color:var(--muted);font-weight:600}
     <div class="note">净流动性(联储总资产 − TGA − 逆回购)13 周变化,十亿美元。红色底色 = 规则处于半仓的时段。规则:13 周变化连续 20 个交易日为负 → 半仓;连续 20 个交易日为正 → 满仓。为什么选它,见下面的历史模拟。</div>
   </div>
 
+  <div class="card" id="watchCard">
+    <h2>管道与砍仓观察(未经回测验证,不进仓位规则)</h2>
+    <div class="grid3">
+      <div class="wbox" id="wPipe"></div>
+      <div class="wbox" id="wReb"></div>
+      <div class="wbox" id="wCross"></div>
+    </div>
+    <div class="grid2" style="margin-top:12px">
+      <div><div class="sub">SOFR − IORB 近一年(BP),背景 = 分档</div><div id="cPipe" class="chart" style="height:220px"></div></div>
+      <div><div class="sub">黄金(GLD)与纳指(QQQ)20 日收益相关性</div><div id="cCorr" class="chart" style="height:220px"></div></div>
+    </div>
+    <div class="note" id="wNote"></div>
+  </div>
+
   <div class="card" id="simCard">
     <h2>历史模拟:用不同数据指导操作,结果如何</h2>
     <div class="sub">2019-03 起,假如每天按某条规则调整美股仓位。信号按数据实际公布时间滞后计算,第二天执行,每次调仓扣 0.05% 成本,没买股票的钱拿联邦基金利率。</div>
@@ -205,6 +233,12 @@ th{color:var(--muted);font-weight:600}
     <h2 style="margin-top:18px;font-size:15px">所选规则:每一次调仓</h2>
     <div class="scroll"><table id="simSegs"></table></div>
     <div class="note">历史表现不代表未来。2020 年疫情、2025 年 4 月关税这类突发暴跌,流动性数据事先看不出来。完整报告见仓库 output/backtest_summary.md。</div>
+  </div>
+
+  <div class="card" id="resCard">
+    <h2>新指标历史检验</h2>
+    <div class="sub" id="resSub"></div>
+    <div id="resBody"></div>
   </div>
 
   <div class="card">
@@ -246,8 +280,9 @@ th{color:var(--muted);font-weight:600}
     <div class="card">
       <h2>每日运行记录</h2>
       <div class="scroll"><table id="log"></table></div>
-      <h2 style="margin-top:18px">未来 30 天国债结算</h2>
+      <h2 style="margin-top:18px">未来 30 天日历</h2>
       <div class="scroll"><table id="cal"></table></div>
+      <div class="note" id="calNote"></div>
     </div>
   </div>
 
@@ -343,7 +378,7 @@ function drawRaw(){
     hovertemplate: `%{y:,.2f} ${s.unit}<extra></extra>`}],
     baseLayout({shapes, xaxis: {gridcolor: css("--grid"), type:"date", range: xr}, yaxis: {gridcolor: css("--grid"), title: {text: s.unit}}}), cfg);
   const lv = s.v[li];
-  document.getElementById("rawNote").textContent = `最新 ${fmt(lv, 2)} ${s.unit}` + (s.threshold == null ? "" : ` · 红虚线 = 预警线 ${s.threshold}`);
+  document.getElementById("rawNote").textContent = `最新 ${fmt(lv, 2)} ${s.unit}` + (s.asof ? `(数据日期 ${s.asof})` : "") + (s.threshold == null ? "" : ` · 红虚线 = 预警线 ${s.threshold}`);
 }
 sel.onchange = drawRaw;
 drawRaw();
@@ -449,6 +484,64 @@ else {
   draw();
 }
 
+// 管道与砍仓观察
+const W = D.watch;
+if (!W){ document.getElementById("watchCard").style.display = "none"; }
+else {
+  const P = W.pipe;
+  document.getElementById("wPipe").innerHTML = `<h3>回购管道 SOFR − IORB</h3>` +
+    `<div class="v">${P.bp == null ? "—" : fmt(P.bp, 0) + " BP"}</div>` +
+    `<div style="margin:6px 0"><span class="badge" style="background:${css(P.color)}">${P.tier}</span></div>` +
+    `<div class="sub">数据日期 ${P.date || "—"} · 已连续 ${P.streak} 天高于 IORB</div>` +
+    `<div class="sub">SOFR99 − IORB ${fmt(P.sofr99, 0)} BP · SRF 近 5 日最高 ${fmt(P.srf5, 1)} 十亿</div>` +
+    `<div class="sub">分档:≤0 宽松 / 0–3 正常 / 3–5 偏紧 / 5–10 紧张 / ≥10 瘫痪</div>`;
+  const RB = W.rebound;
+  document.getElementById("wReb").innerHTML = `<h3>反抽体检(三条都满足才算“没恶化”)</h3>` +
+    `<div class="v">${RB.passed} / ${RB.total}</div>` +
+    RB.conds.map(c => `<div class="chk"><b class="${c.ok == null ? "" : c.ok ? "pos" : "neg"}">${c.ok == null ? "—" : c.ok ? "✓" : "✗"}</b> ${c.name}<br><span class="sub">${c.value} · ${c.date || "无数据"}</span></div>`).join("");
+  const X = W.cross;
+  document.getElementById("wCross").innerHTML = X
+    ? `<h3>跨资产砍仓检测(${X.date})</h3>` +
+      `<div class="v ${X.alarm ? "neg" : ""}">${X.quadrant}</div>` +
+      `<div class="sub" style="margin:4px 0">${X.quadrant_note}</div>` +
+      `<div>近 5 日 QQQ <b class="${X.qqq5 >= 0 ? "pos" : "neg"}">${(X.qqq5*100).toFixed(1)}%</b> · GLD <b class="${X.gld5 >= 0 ? "pos" : "neg"}">${(X.gld5*100).toFixed(1)}%</b></div>` +
+      `<div>20 日相关 <b>${fmt(X.corr20, 2)}</b> · 近 20 日同日双跌 <b>${X.dd20}</b> 天</div>` +
+      (X.tips10_5d_bp == null ? "" : `<div class="sub">10 年 TIPS 5 日变化 ${X.tips10_5d_bp > 0 ? "+" : ""}${X.tips10_5d_bp} BP${X.gold_rate_diverge ? ",<b class='neg'>黄金逆着实际利率下跌,疑似被砍仓</b>" : ""}</div>`) +
+      (X.alarm ? `<div class="neg" style="margin-top:4px"><b>砍仓警报</b></div>` : "")
+    : `<h3>跨资产砍仓检测</h3><div class="sub">缺少 GLD 价格数据</div>`;
+  const vl = W.vix_latest, mg = W.margin;
+  document.getElementById("wNote").innerHTML =
+    (vl ? `最新 VIX ${fmt(vl.value, 2)}(${vl.date},FRED 滞后时用 Yahoo 当日收盘补)。` : "") +
+    (mg ? ` 券商融资余额(FINRA,月度):${mg.month} 为 ${fmt(mg.value_bn, 0)} 十亿美元,同比 ${(mg.yoy*100).toFixed(1)}%,距 ${mg.peak_month} 峰值 ${(mg.from_peak*100).toFixed(1)}%。` : " 券商融资余额暂未获取。") +
+    " 这些指标是和外部分析对比后加入的,历史检验见下面“新指标历史检验”。";
+  const tb = [[-100,0,"--band-loose"],[0,3,"--band-neutral"],[3,5,"--band-semitight"],[5,10,"--band-tight"],[10,1000,"--band-tight"]]
+    .map(([a,b,c]) => ({type:"rect", xref:"paper", x0:0, x1:1, y0:a, y1:b, fillcolor: css(c), line:{width:0}, layer:"below"}));
+  const ys = P.hist.bp, ylo = Math.min(-5, ...ys) - 2, yhi = Math.max(12, ...ys) + 2;
+  Plotly.newPlot("cPipe", [{x: P.hist.dates, y: ys, type:"scatter", mode:"lines", line:{color: css("--accent"), width:1.6, shape:"hv"},
+    hovertemplate: "%{y:.0f} BP<extra></extra>"}], baseLayout({shapes: tb, yaxis:{range:[ylo, yhi], gridcolor: css("--grid"), zerolinecolor: css("--muted")}}), cfg);
+  if (X) Plotly.newPlot("cCorr", [{x: X.hist.dates, y: X.hist.corr20, type:"scatter", mode:"lines", line:{color: css("--p2"), width:1.6},
+    hovertemplate: "%{y:.2f}<extra></extra>"}], baseLayout({shapes:[{type:"line", xref:"paper", x0:0, x1:1, y0:0.5, y1:0.5, line:{color: css("--tight"), dash:"dash", width:1}}],
+    yaxis:{range:[-1,1], gridcolor: css("--grid"), zerolinecolor: css("--muted")}}), cfg);
+  else document.getElementById("cCorr").style.display = "none";
+}
+
+// 新指标历史检验
+const RS = D.research;
+if (!RS){ document.getElementById("resCard").style.display = "none"; }
+else {
+  document.getElementById("resSub").textContent = `数据截至 ${RS.asof}。只做研究,不进仓位规则;样本小的结论只能当参考。完整版见仓库 output/research_summary.md。`;
+  const tbl = t => `<div class="scroll"><table><tr>${t.headers.map(h => `<th>${h}</th>`).join("")}</tr>` +
+    t.rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("") + `</table></div>`;
+  document.getElementById("resBody").innerHTML = RS.sections.map(s =>
+    `<h2 style="margin-top:16px;font-size:15px">${s.title}</h2>` +
+    (s.verdict ? `<div class="verdict">${s.verdict}</div>` : "") +
+    `<div class="note" style="margin-top:0">${s.note}</div>` + tbl(s) +
+    (s.summary ? `<div class="sub" style="margin-top:8px">汇总</div>` + tbl(s.summary) : "") +
+    (s.diverge ? `<div class="note">黄金在 10 年 TIPS 实际利率 5 日下降时 5 日跌超 2%:共 ${s.diverge.days} 天(${s.diverge.episodes} 段),之后 GLD 20 日 ${s.diverge.gld20}、60 日 ${s.diverge.gld60}(所有日子平均 ${s.diverge.base20} / ${s.diverge.base60})。</div>` : "") +
+    (s.detail ? `<details><summary>最近 15 次大涨明细</summary>${tbl(s.detail)}</details>` : "")
+  ).join("");
+}
+
 // 两天对比
 const dA = document.getElementById("dA"), dB = document.getElementById("dB");
 dA.min = dB.min = D.dates[0]; dA.max = dB.max = D.dates[N-1];
@@ -487,8 +580,12 @@ document.getElementById("log").innerHTML = `<tr><th>运行日</th><th>数据日<
 
 // 结算日历
 document.getElementById("cal").innerHTML = D.calendar.length
-  ? `<tr><th>结算日</th><th>毛额(十亿美元)</th><th>品种</th></tr>` + D.calendar.map(c => `<tr><td>${c.date}</td><td>${c.gross_bn == null ? "待公布" : fmt(c.gross_bn)}</td><td>${c.detail}</td></tr>`).join("")
+  ? `<tr><th>日期</th><th>结算毛额</th><th>到期</th><th>净额</th><th>事件 / 品种</th></tr>` + D.calendar.map(c =>
+      `<tr><td>${c.date}</td><td>${c.pending ? "待公布" : fmt(c.gross_bn)}</td><td>${fmt(c.mature_bn)}</td>` +
+      `<td class="${c.net_bn == null ? "" : c.net_bn > 0 ? "neg" : "pos"}">${fmt(c.net_bn)}</td>` +
+      `<td style="text-align:left">${[...c.events.map(e => `<b>${e}</b>`), c.detail].filter(Boolean).join(" · ")}</td></tr>`).join("")
   : `<tr><td class="sub">暂无数据</td></tr>`;
+document.getElementById("calNote").textContent = "金额单位十亿美元。净额 = 结算毛额 − 到期(约数),正数(红)表示从市场抽走现金。";
 </script>
 </body>
 </html>

@@ -4,7 +4,7 @@ on:
   workflow_dispatch: {}
   push:
     branches: ["claude/**"]
-    paths: ["backtest/**", ".github/workflows/backtest.yml"]
+    paths: ["backtest/**", "*.py", ".github/workflows/backtest.yml"]
 
 permissions:
   contents: write
@@ -18,13 +18,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pandas requests
+      - run: pip install pandas requests openpyxl
       - run: python backtest/fetch_market.py
-      - run: python backtest/backtest.py
+      - run: python liquidity_monitor.py --out output
       - name: Commit results
         run: |
           git config user.name "liquidity-bot"
           git config user.email "liquidity-bot@users.noreply.github.com"
-          git add output/market.csv output/backtest_summary.md output/signals.csv output/backtest.json
+          git add output/ docs/
           git diff --cached --quiet || git commit -m "Update market prices and backtest $(date -u +%F)"
           git push
