@@ -322,8 +322,10 @@ def study_btc() -> dict | None:
         for name, p_ in [("一直满仓", pd.Series(1.0, idx))] + list(pos.items()):
             pf = B.perf(p_, r, cash, BTC_START, "2100-01-01")
             c = B.const_benchmark(pf["exposure"], r, cash, BTC_START, "2100-01-01")
-            tm_rows.append([asset, name, _pct(pf["cagr"], 1, False), _pct(pf["cagr"] - c) if name != "一直满仓" else "—",
-                            _pct(pf["maxdd"]), _pct(pf["exposure"], 0, False), pf["switches"]])
+            yrs = len(r[BTC_START:]) / 252
+            tot = (1 + pf["cagr"]) ** yrs - 1
+            tm_rows.append([asset, name, _pct(tot, 0), _pct(pf["cagr"], 1, False), _pct(pf["cagr"] - c) if name != "一直满仓" else "—",
+                            _pct(pf["maxdd"]), f"{pf['sharpe']:.2f}", _pct(pf["exposure"], 0, False), pf["switches"]])
     rows60 = pd.DataFrame({"b": btc.pct_change(), "q": q.pct_change()}).rolling(60).corr().unstack()["b"]["q"]
     return {"title": "6. 比特币与流动性(只认现货 ETF 上市后的数据)",
             "note": f"现货比特币 ETF {BTC_START} 上市。ETF 前 2018–2023 只用来对照,检验“机构化以后比特币才跟着美元流动性走”这个假设。"
@@ -331,7 +333,7 @@ def study_btc() -> dict | None:
             "headers": ["时期", "月度样本", "与净流动性 4 周变化", "与综合指数 4 周变化", "与纳指 100", "与黄金"],
             "rows": corr_rows,
             "summary": {"headers": ["时期", "状态", "天数", "段数", "BTC 后 20 日", "BTC 后 60 日", "60 日上涨概率"], "rows": state_rows},
-            "detail": {"headers": ["资产", "规则(ETF 后)", "年化", "择时增益", "最大回撤", "平均仓位", "调仓"], "rows": tm_rows},
+            "detail": {"headers": ["资产", "规则(ETF 后)", "总收益", "年化", "择时增益", "最大回撤", "夏普", "平均仓位", "调仓"], "rows": tm_rows},
             "detail_title": "按规则操作(只算 ETF 上市后)",
             "btc_qqq_corr60": {"dates": [d.strftime("%Y-%m-%d") for d in rows60.index[rows60.index >= "2020-01-01"]],
                                "v": [None if pd.isna(v) else round(float(v), 3) for v in rows60[rows60.index >= "2020-01-01"]]}}

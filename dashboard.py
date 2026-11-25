@@ -213,6 +213,10 @@ details{margin-top:10px} summary{cursor:pointer;color:var(--accent)}
     <div class="sub">机构通过 ETF 大举买入之后,比特币才更像一项受美元流动性影响的资产;更早的“小圈子时代”不纳入。样本不到 3 年,只能当参考。</div>
     <div id="cBtc" class="chart" style="height:320px;margin-top:8px"></div>
     <div class="note">蓝线 = 比特币价格(对数,右轴);柱 = 净流动性 13 周变化(十亿美元,左轴);红色底色 = 净流动性规则 ③ 半仓的时段。</div>
+    <h3 style="margin:14px 0 4px">按流动性择时 vs 一直满仓(2024-01-11 起,1 元起步)</h3>
+    <div id="cBtcEq" class="chart" style="height:300px"></div>
+    <div class="scroll"><table id="btcPerf"></table></div>
+    <div class="note">信号次日执行,每次调仓扣 0.05%,空仓部分拿联邦基金利率。择时增益 = 年化 − 一直持有同等平均仓位的年化。只有 3–5 次调仓,运气成分很大。</div>
     <div id="cBtcCorr" class="chart" style="height:200px"></div>
     <div class="note">比特币与纳指 100 的 60 日收益相关性(2020 年起,虚线 = ETF 上市)。相关性越高,比特币越像“高波动的科技股”,越受同一股流动性驱动。</div>
     <div id="btcVerdict"></div>
@@ -597,7 +601,15 @@ else {
     {x: ds, y: sl(B.btc), type:"scatter", mode:"lines", line:{color: css("--accent"), width:2}, yaxis:"y2", name:"比特币", hovertemplate:"BTC %{y:,.0f}<extra></extra>"}],
     baseLayout({shapes: lowB, bargap:0, yaxis:{gridcolor: css("--grid"), zerolinecolor: css("--muted"), title:{text:"十亿美元"}},
       yaxis2:{overlaying:"y", side:"right", type:"log", showgrid:false, title:{text:"BTC"}}, margin:{l:56, r:56, t:10, b:36}}), cfg);
+  const eqT = [["bh","一直满仓", css("--muted"), "dot"], ["nl","③ 净流动性", css("--p1"), "solid"], ["lvl","① 综合指数水平", css("--p2"), "solid"], ["combo","⑤ ①或③任一减仓", css("--ink"), "solid"]]
+    .map(([k, n, c, dsh]) => { const r = B.rules.find(x => x.key === k); if (!r || !r.assets || !r.assets.BTC) return null;
+      const e = sl(r.assets.BTC.equity), b0 = e.find(v => v != null); return {x: ds, y: e.map(v => v == null ? null : v / b0), type:"scatter", mode:"lines", line:{color:c, width: k === "bh" ? 1.5 : 2, dash:dsh}, name:n, hovertemplate: n + " %{y:.2f}<extra></extra>"}; }).filter(Boolean);
+  Plotly.newPlot("cBtcEq", eqT, baseLayout({yaxis:{gridcolor: css("--grid"), title:{text:"资金(起点 = 1)"}}, legend:{orientation:"h", y:-0.18}}), cfg);
   const sec = D.research && D.research.sections.find(s => s.btc_qqq_corr60);
+  if (sec && sec.detail){
+    const h = sec.detail.headers, rows = sec.detail.rows.filter(r => r[0] === "BTC" || r[0] === "MSTR");
+    document.getElementById("btcPerf").innerHTML = "<tr>" + h.map(x => `<th>${x}</th>`).join("") + "</tr>" + rows.map(r => "<tr>" + r.map(x => `<td>${x}</td>`).join("") + "</tr>").join("");
+  }
   if (sec){
     const C = sec.btc_qqq_corr60;
     Plotly.newPlot("cBtcCorr", [{x: C.dates, y: C.v, type:"scatter", mode:"lines", line:{color: css("--p2"), width:1.5}, hovertemplate:"%{y:.2f}<extra></extra>"}],
