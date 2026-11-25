@@ -82,9 +82,31 @@ def qe_flag(fa: pd.Series) -> pd.Series:
     return f.ffill().fillna(0.0)
 
 
-def qe_event_flag(idx) -> pd.Series:
+def easing_events() -> list:
+    """D 方案用的“大规模宽松事件”:research.py 里的 17 个联储宽松事件(QE、紧急贷款工具、停止/放慢缩表、买短债等),
+    这份名单在检验加码之前就已经定好。以后出现新的宽松手段(SLR 放松、降准备金率、财政部大规模回购等),在 research.EVENTS 加一行。"""
+    try:
+        from research import EVENTS
+        return EVENTS
+    except Exception:  # noqa: BLE001
+        return QE_EVENTS
+
+
+def nl_surge_flag(nl_chg: pd.Series) -> pd.Series:
+    """E 方案(只作对照/提示):净流动性 13 周增量高于自己过去 3 年的 90% 分位,连续 10 天 → 加码;13 周变化转负连续 20 天 → 退出。
+    TGA 下降、逆回购释放这类“不是 QE 的放水”会体现在这里。"""
+    p90 = nl_chg.rolling(756, min_periods=250).quantile(0.9)
+    hi = (nl_chg > p90).astype(int).rolling(10).sum() == 10
+    lo = (nl_chg < 0).astype(int).rolling(20).sum() == 20
+    f = pd.Series(np.nan, index=nl_chg.index)
+    f[hi] = 1.0
+    f[lo] = 0.0
+    return f.ffill().fillna(0.0)
+
+
+def qe_event_flag(idx, events=None) -> pd.Series:
     f = np.zeros(len(idx))
-    for d, _ in QE_EVENTS:
+    for d, _ in (events or QE_EVENTS):
         j = idx.searchsorted(pd.Timestamp(d)) + 1
         if j < len(idx):
             f[j:j + QE_HOLD] = 1.0
@@ -146,7 +168,8 @@ def _boot(rets: dict, n=5000, horizon=252, block=63, seed=7) -> dict:
     return out
 
 
-def run(idx, cash, R_rules: dict, sm: pd.Series | None = None, fed_assets: pd.Series | None = None) -> dict | None:
+def run(idx, cash, R_rules: dict, sm: pd.Series | None = None, fed_assets: pd.Series | None = None,
+        net_liq: pd.Series | None = None) -> dict | None:
     from pathlib import Path
     m = pd.read_csv(Path(__file__).resolve().parent.parent / "output" / "market.csv", index_col=0, parse_dates=True)
     m = m[~m.index.duplicated(keep="last")]
@@ -163,9 +186,13 @@ def run(idx, cash, R_rules: dict, sm: pd.Series | None = None, fed_assets: pd.Se
     lf = loose_flag(sm) if sm is not None else pd.Series(0.0, idx)
     T3 = tier(sigs["① 综合指数(主方案)"], lf)
     T3b = tier(sigs["① 综合指数(主方案)"], qe_flag(fed_assets)) if fed_assets is not None else T3
-    T3d = tier(sigs["① 综合指数(主方案)"], qe_event_flag(idx))
-    MD = "①+宣布QE加码(三档 D)"
-    sigs = {"一直持有(不择时)": sigs["一直持有(不择时)"], MD: T3d, MAIN: T3, "①+扩表加码(三档 B)": T3b, "① 两档(减半/正常)": sigs["① 综合指数(主方案)"],
+    EV = easing_events()
+    T3d = tier(sigs["① 综合指数(主方案)"], qe_event_flag(idx, EV))
+    T3q = tier(sigs["① 综合指数(主方案)"], qe_event_flag(idx, QE_EVENTS))
+    T3e = tier(sigs["① 综合指数(主方案)"], nl_surge_flag(net_liq.diff(65))) if net_liq is not None else T3
+    MD = "①+宽松事件加码(三档 D,主方案)"
+    sigs = {"一直持有(不择时)": sigs["一直持有(不择时)"], MD: T3d, "①+只认 QE 加码(对照)": T3q, "①+净流动性激增加码 E(对照)": T3e,
+            MAIN: T3, "①+扩表加码(三档 B)": T3b, "① 两档(减半/正常)": sigs["① 综合指数(主方案)"],
             "③ 净流动性(对照)": sigs["③ 净流动性(对照)"], "⑤ ①或③(对照)": sigs["⑤ ①或③(对照)"]}
     W = lambda t, wts, lo: _tw(t, wts, lo)  # noqa: E731
 
@@ -186,7 +213,7 @@ def run(idx, cash, R_rules: dict, sm: pd.Series | None = None, fed_assets: pd.Se
         st = _stats(d, cash[on])
         single.append([NAMES[k], st["total"], st["cagr"], st["maxdd"], st["sharpe"]])
     res["btc_era"] = {"start": BTC_START, "dates": [d.strftime("%Y-%m-%d") for d in idx[on]], "equity": eqs,
-                      "rows": rows, "single": single, "boot": _boot({k: daily[k] for k in list(daily)[:5]})}
+                      "rows": rows, "single": single, "boot": _boot({k: daily[k] for k in [list(daily)[0], MD, "① 两档(减半/正常)"]})}
 
     # B) 2004 起,不含比特币(把 BTC 的比例按比例分给其他),检验股债部分是否稳健
     w2 = {k: v for k, v in WEIGHTS.items() if k != "BTC"}
@@ -205,7 +232,7 @@ def run(idx, cash, R_rules: dict, sm: pd.Series | None = None, fed_assets: pd.Se
         lrows.append(row)
     res["long"] = {"weights": {NAMES[k]: v for k, v in w2.items()} | {NAMES["CASH"]: round(1 - sum(w2.values()), 4)},
                    "periods": [p[0] for p in periods], "rows": lrows,
-                   "boot": _boot({k: dl[k][LONG_START:] for k in list(dl)[:5]})}
+                   "boot": _boot({k: dl[k][LONG_START:] for k in [list(dl)[0], MD, "① 两档(减半/正常)"]})}
     res["long"]["loose_weights"] = {NAMES[k]: v for k, v in LOOSE_LONG.items()}
     # 宽松档在历史上出现的时段(按年统计天数占比),以及每段宽松期的股票表现
     res["loose_years_b"] = {str(y): round(float(v), 2) for y, v in (T3b >= 2).groupby(idx.year).mean().items() if v > 0}
@@ -226,7 +253,7 @@ def run(idx, cash, R_rules: dict, sm: pd.Series | None = None, fed_assets: pd.Se
     ref = idx >= pd.Timestamp("2020-01-01")
     Rb = pd.DataFrame({k: r[k] for k in WEIGHTS}).fillna(0)
     rr = []
-    for n in ("一直持有(不择时)", MD, MAIN, "①+扩表加码(三档 B)", "① 两档(减半/正常)"):
+    for n in ("一直持有(不择时)", MD, "①+只认 QE 加码(对照)", "①+净流动性激增加码 E(对照)", MAIN, "① 两档(减半/正常)"):
         d = _daily(W(sigs[n], WEIGHTS, LOOSE), Rb, cash)[ref]
         d = d[: "2023-12-31"]
         st = _stats(d, cash[d.index])
@@ -243,7 +270,7 @@ def run(idx, cash, R_rules: dict, sm: pd.Series | None = None, fed_assets: pd.Se
     res["guide"] = {"dates": [d.strftime("%Y-%m-%d") for d in idx[gon]], "sig": [float(v) for v in sg], "btc_start": BTC_START,
                     "sm": [None if sm is None or pd.isna(v) else round(float(v), 1) for v in (sm[gon] if sm is not None else sg * np.nan)],
                     "alloc": {NAMES[k]: [round(float(v), 3) for v in wd[k]] for k in wd.columns},
-                    "mode": GUIDE_MODE, "name": GK, "qe_events": QE_EVENTS, "qe_hold": QE_HOLD,
+                    "mode": GUIDE_MODE, "name": GK, "qe_events": EV, "nl_surge_now": bool(T3e.iloc[-1] >= 2 or nl_surge_flag(net_liq.diff(65)).iloc[-1] >= 1) if net_liq is not None else False, "qe_hold": QE_HOLD,
                     "eq_timed": [None] * npre + eqs[GK], "eq_hold": [None] * npre + eqs["一直持有(不择时)"]}
     # 今天的建议比例(主方案)
     wt = W(sigs[GK], WEIGHTS, LOOSE).iloc[-1]
@@ -260,7 +287,8 @@ def md(p: dict) -> list[str]:
          + "。信号用规则 ①,减半时比特币和股票各打五折,腾出的钱放现金,美债不动。", "",
          "宽松加码档(三档 A):综合指数 20 日均值 >70 连续 20 天 → 改为" + "、".join(f"{k} {v:.0%}" for k, v in p["loose_weights"].items())
          + ";跌回 60 以下连续 20 天 → 恢复正常;减半信号优先。三档 B:联储总资产 13 周增长 >5% 连续 10 天 → 加码,13 周变化转负连续 20 天 → 退出。"
-         "三档 D:美联储宣布 QE/扩表的次日加码,持有约一年(250 个交易日)。"
+         "三档 D(主方案):美联储任一大规模宽松事件(QE、紧急贷款工具、停止/放慢缩表、买短债等,共 17 次)的次日加码,持有约一年;"
+         "对照:只认 QE 的 7 次;E 净流动性 13 周增量高于过去 3 年 90% 分位连续 10 天。"
          "两个加码条件都是在看结果之前定的。", "",
          f"### 2024-01-11 起(含比特币)", "", "| 方案 | 总收益 | 年化 | 最大回撤 | 波动 | 夏普 | 调仓 |", "|---|---|---|---|---|---|---|"]
     for r in p["btc_era"]["rows"]:

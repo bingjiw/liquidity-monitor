@@ -260,7 +260,7 @@ def run(f: pd.DataFrame | None = None, out: Path = ROOT / "output") -> dict:
             item["assets"]["BTC"] = {"equity": [round(float(v), 4) if o else None for v, o in zip(eq, on)]}
     try:
         import portfolio
-        pf_ = portfolio.run(idx, cash, R, X.get("sm"), F.get("fed_assets"))
+        pf_ = portfolio.run(idx, cash, R, X.get("sm"), F.get("fed_assets"), F.get("net_liq"))
         if pf_:
             j["portfolio"] = pf_
             with open(out / "backtest_summary.md", "a", encoding="utf-8") as fh:
