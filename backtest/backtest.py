@@ -258,6 +258,15 @@ def run(f: pd.DataFrame | None = None, out: Path = ROOT / "output") -> dict:
             eq = (1 + (pos_r.shift(1).fillna(1.0) * rb + (1 - pos_r.shift(1).fillna(1.0)) * cash
                        - pos_r.diff().abs().fillna(0) * COST).where(on, 0)).cumprod()
             item["assets"]["BTC"] = {"equity": [round(float(v), 4) if o else None for v, o in zip(eq, on)]}
+    try:
+        import portfolio
+        pf_ = portfolio.run(idx, cash, R, X.get("sm"))
+        if pf_:
+            j["portfolio"] = pf_
+            with open(out / "backtest_summary.md", "a", encoding="utf-8") as fh:
+                fh.write("\n" + "\n".join(portfolio.md(pf_)) + "\n")
+    except Exception as e:  # noqa: BLE001
+        print(f"[警告] 综合组合回测失败: {e}")
     (out / "backtest.json").write_text(json.dumps(j, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     return j
 

@@ -15,7 +15,8 @@ import requests
 
 START = "2003-01-01"
 EXTRA = {"GLD": "GLD", "IWM": "IWM", "SOXX": "SOXX", "HYG": "HYG", "^VIX": "VIX_Y",
-         "BTC-USD": "BTC", "IBIT": "IBIT", "MSTR": "MSTR"}
+         "BTC-USD": "BTC", "IBIT": "IBIT", "MSTR": "MSTR",
+         "VTI": "VTI", "VXUS": "VXUS", "EFA": "EFA", "IEF": "IEF"}
 OUT = Path(__file__).resolve().parent.parent / "output" / "market.csv"
 
 
