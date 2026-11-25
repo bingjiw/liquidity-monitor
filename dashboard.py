@@ -604,7 +604,7 @@ else {
   const eqT = [["bh","一直满仓", css("--muted"), "dot"], ["nl","③ 净流动性", css("--p1"), "solid"], ["lvl","① 综合指数水平", css("--p2"), "solid"], ["combo","⑤ ①或③任一减仓", css("--ink"), "solid"]]
     .map(([k, n, c, dsh]) => { const r = B.rules.find(x => x.key === k); if (!r || !r.assets || !r.assets.BTC) return null;
       const e = sl(r.assets.BTC.equity), b0 = e.find(v => v != null); return {x: ds, y: e.map(v => v == null ? null : v / b0), type:"scatter", mode:"lines", line:{color:c, width: k === "bh" ? 1.5 : 2, dash:dsh}, name:n, hovertemplate: n + " %{y:.2f}<extra></extra>"}; }).filter(Boolean);
-  Plotly.newPlot("cBtcEq", eqT, baseLayout({yaxis:{gridcolor: css("--grid"), title:{text:"资金(起点 = 1)"}}, legend:{orientation:"h", y:-0.18}}), cfg);
+  Plotly.newPlot("cBtcEq", eqT, baseLayout({yaxis:{gridcolor: css("--grid"), title:{text:"资金(起点 = 1)"}}, showlegend:true, legend:{orientation:"h", y:-0.15}, margin:{l:56, r:16, t:10, b:60}}), cfg);
   const sec = D.research && D.research.sections.find(s => s.btc_qqq_corr60);
   if (sec && sec.detail){
     const h = sec.detail.headers, rows = sec.detail.rows.filter(r => r[0] === "BTC" || r[0] === "MSTR");
