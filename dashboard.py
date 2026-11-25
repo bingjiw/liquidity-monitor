@@ -184,8 +184,9 @@ details{margin-top:10px} summary{cursor:pointer;color:var(--accent)}
     <div class="abar" id="gdBar"></div>
     <div class="alab" id="gdLab"></div>
     <div class="sub" id="gdWhy" style="margin-top:6px"></div>
+    <div class="row" style="margin-top:8px"><button data-gr="etf" class="on">2024 ETF 上市后</button><button data-gr="all">2004 年至今(看历史上的宽松加码)</button></div>
     <div id="cGuide" class="chart" style="height:380px;margin-top:6px"></div>
-    <div class="note">把鼠标移到图上任意一天(手机上点一下),上面就显示那一天的操作建议;移开或在最右端就是今天的建议。上图:流动性综合指数 20 日均值,红区 = 低于 35,绿区 = 高于 50。下图:每天各资产的建议比例。规则:20 日均值低于 35 连续 20 天 → 比特币和股票各减一半放现金;高于 50 连续 20 天 → 恢复;美债不动。比例是假设的,只是规则输出,不是投资建议。</div>
+    <div class="note">把鼠标移到图上任意一天(手机上点一下),上面就显示那一天的操作建议;移开或在最右端就是今天的建议。上图:流动性综合指数 20 日均值,红区 = 低于 35,绿区 = 高于 50,深绿 = 高于 70。下图:每天各资产的建议比例。三档规则:① 20 日均值低于 35 连续 20 天 → 减半(比特币 20%,股票减半,其余放现金),高于 50 连续 20 天 → 恢复正常(比特币 40%);② 美联储任一大规模宽松事件(QE、紧急贷款工具、停止或放慢缩表、购买短债补充准备金等)的第二天 → 宽松加码(比特币 70%、股票 25%、美债 5%),持有约一年。减半信号优先:2025-10/12 联储宣布停止缩表和买短债时,指数已处在减半状态,所以现在没有加码;点“2004 年至今”可以看 2008–09、2010–13、2019–21、2023–25 年等宽松期规则会怎么建议(紫色底色 = 加码,红色底色 = 减半)。2024 年前的比特币比例只是规则输出,不算收益。比例是假设的,只是规则输出,不是投资建议。</div>
   </div>
 
   <div class="card">
@@ -236,6 +237,10 @@ details{margin-top:10px} summary{cursor:pointer;color:var(--accent)}
     <h3 style="margin:14px 0 4px">2004 年起(不含比特币):股债部分长期是否站得住</h3>
     <div class="sub" id="pfLongW"></div>
     <div class="scroll"><table id="pfLong"></table></div>
+    <h3 style="margin:14px 0 4px">宽松加码档在历史上什么时候出现、结果如何</h3>
+    <div class="scroll"><table id="pfLoose"></table></div>
+    <div class="scroll" style="margin-top:8px"><table id="pfRef"></table></div>
+    <div class="note">第二张表用的是 ETF 上市前的比特币,那时它还不太受美元流动性驱动,所以只作参考。2021 年加码之后正好赶上 2022 年大跌,这就是加码档的代价:等指数确认“真宽松”,价格往往已经涨了很多。</div>
     <h3 style="margin:14px 0 4px">未来一年推演(不是预测)</h3>
     <div class="scroll"><table id="pfBoot"></table></div>
     <div class="note">把历史每日收益按 63 天一段打乱重抽,模拟 5000 个“未来一年”,看结果的范围。它假设未来和抽样那段历史相似;如果出现历史上没有的冲击,真实结果会落在范围之外。</div>
@@ -631,30 +636,47 @@ else {
   const AC = {"比特币": "--p2", "美股 VTI": "--p1", "海外股 VXUS": "--p5", "美债 IEF": "--p4", "现金 SGOV": "--neutral"};
   const col = k => css(AC[k] || "--muted");
   const show = i => {
-    const full = G.sig[i] >= 1, sm = G.sm[i];
+    const full = G.sig[i] >= 1, loose = G.sig[i] >= 2, sm = G.sm[i];
     document.getElementById("gdDate").textContent = i === n - 1 ? `今天的建议(数据到 ${G.dates[i]})` : `历史上 ${G.dates[i]} 的建议`;
     const st = document.getElementById("gdStat");
-    st.textContent = full ? "正常持有(满仓)" : "风险资产减半";
-    st.style.background = full ? css("--loose") : css("--tight");
+    st.textContent = loose ? "宽松加码(比特币和股票加仓)" : full ? "正常持有" : "风险资产减半";
+    st.style.background = loose ? css("--p4") : full ? css("--loose") : css("--tight");
     document.getElementById("gdBar").innerHTML = names.map(k => { const v = G.alloc[k][i]; return v > 0.005 ? `<div style="width:${v*100}%;background:${col(k)}">${v >= 0.08 ? (v*100).toFixed(0) + "%" : ""}</div>` : ""; }).join("");
     document.getElementById("gdLab").innerHTML = names.map(k => `<span><i style="background:${col(k)}"></i>${k} <b>${(G.alloc[k][i]*100).toFixed(0)}%</b></span>`).join("");
     const smt = sm == null ? "—" : sm.toFixed(1);
-    let run = 0; for (let j = i; j >= 0 && G.sm[j] != null && (full ? G.sm[j] < 35 : G.sm[j] > 50); j--) run++;
-    document.getElementById("gdWhy").textContent = full
+    let run = 0; for (let j = i; j >= 0 && G.sm[j] != null && (loose ? G.sm[j] < 60 : full ? G.sm[j] < 35 : G.sm[j] > 50); j--) run++;
+    let up = 0; if (full && !loose) for (let j = i; j >= 0 && G.sm[j] != null && G.sm[j] > 70; j--) up++;
+    const D_ = G.mode === "D";
+    let ev = null; if (D_) for (const [d, nm] of G.qe_events){ const k = G.dates.findIndex(x => x > d); if (k >= 0 && k <= i && i - k < G.qe_hold) ev = [d, nm, G.qe_hold - (i - k)]; }
+    document.getElementById("gdWhy").textContent = D_ && loose && ev
+      ? `美联储 ${ev[0]}:${ev[1]} → 第二天起宽松加码,持有约一年(还剩 ${ev[2]} 个交易日)。期间综合指数 20 日均值若连续 20 天低于 35,直接减半。`
+      : D_ && !loose && full ? `流动性综合指数 20 日均值 ${smt}。美联储一旦推出大规模宽松(QE、紧急贷款工具、停止缩表、买短债等),第二天就加码;连续 20 天低于 35 则减半。`
+      : D_ && !full ? `流动性综合指数 20 日均值 ${smt},之前连续 20 天低于 35 → 减半(减半优先于加码)。` + (run > 0 ? `已连续 ${run} 天高于 50,再 ${Math.max(20 - run, 0)} 天恢复。` : `要连续 20 天高于 50 才恢复。`) + (ev ? `美联储 ${ev[0]}:${ev[1]}(宽松事件一年内),恢复后直接进入加码。` : "")
+      : loose
+      ? `流动性综合指数 20 日均值 ${smt},之前连续 20 天高于 70 → 宽松加码。` + (run > 0 ? `已连续 ${run} 天低于 60,再 ${Math.max(20 - run, 0)} 天就退回正常;` : `跌回 60 以下连续 20 天才退回正常;`) + `连续 20 天低于 35 则直接减半。`
+      : full && up > 0 ? `流动性综合指数 20 日均值 ${smt},已连续 ${up} 天高于 70,再 ${Math.max(20 - up, 0)} 天就进入宽松加码。`
+      : full
       ? `流动性综合指数 20 日均值 ${smt}。` + (run > 0 ? `已连续 ${run} 天低于 35,再 ${Math.max(20 - run, 0)} 天仍低于 35 就减仓。` : `连续 20 天低于 35 才会减仓。`)
       : `流动性综合指数 20 日均值 ${smt},之前连续 20 天低于 35 → 减半。` + (run > 0 ? `已连续 ${run} 天高于 50,再 ${Math.max(20 - run, 0)} 天就恢复满仓。` : `要连续 20 天高于 50 才恢复满仓。`);
     const t = G.eq_timed[i], h = G.eq_hold[i];
-    document.getElementById("gdEq").innerHTML = `2024-01-11 投入 1 元,到这天<br>按指引 <b>${t.toFixed(2)}</b> 元 · 一直持有 <b>${h.toFixed(2)}</b> 元`;
+    document.getElementById("gdEq").innerHTML = t == null ? `比特币 ETF 上市(2024-01-11)前:<br>这里只显示规则当时会给出的比例,不算收益`
+      : `2024-01-11 投入 1 元,到这天<br>按指引 <b>${t.toFixed(2)}</b> 元 · 一直持有 <b>${h.toFixed(2)}</b> 元`;
   };
   const zone = (a, b, c) => ({type:"rect", xref:"paper", yref:"y", x0:0, x1:1, y0:a, y1:b, fillcolor: css(c), line:{width:0}, layer:"below"});
   const lowB = []; let s0 = null;
   G.sig.forEach((p, i) => { if (p < 1 && s0 == null) s0 = i; if ((p >= 1 || i === n - 1) && s0 != null){ lowB.push({type:"rect", xref:"x", yref:"paper", x0:G.dates[s0], x1:G.dates[i], y0:0, y1:1, fillcolor: css("--tight"), opacity:0.07, line:{width:0}, layer:"below"}); s0 = null; } });
+  const hiB = []; let h0 = null;
+  G.sig.forEach((p, i) => { if (p >= 2 && h0 == null) h0 = i; if ((p < 2 || i === n - 1) && h0 != null){ hiB.push({type:"rect", xref:"x", yref:"paper", x0:G.dates[h0], x1:G.dates[i], y0:0, y1:1, fillcolor: css("--p4"), opacity:0.08, line:{width:0}, layer:"below"}); h0 = null; } });
   const tr = [{x: G.dates, y: G.sm, type:"scatter", mode:"lines", line:{color: css("--ink"), width:1.8}, name:"综合指数 20 日均值", hovertemplate:"指数均值 %{y:.1f}<extra></extra>"}];
   names.forEach(k => tr.push({x: G.dates, y: G.alloc[k], type:"scatter", mode:"lines", stackgroup:"a", line:{width:0.5, color: col(k)}, fillcolor: col(k), name:k, xaxis:"x", yaxis:"y2", hovertemplate: k + " %{y:.0%}<extra></extra>"}));
-  Plotly.newPlot("cGuide", tr, baseLayout({grid:{rows:2, columns:1, roworder:"top to bottom"}, shapes:[zone(0,35,"--band-tight"), zone(50,100,"--band-loose"), ...lowB],
-    yaxis:{domain:[0.62,1], range:[15,75], gridcolor: css("--grid"), title:{text:"指数"}}, yaxis2:{domain:[0,0.56], range:[0,1], tickformat:".0%", gridcolor: css("--grid"), title:{text:"建议比例"}},
+  Plotly.newPlot("cGuide", tr, baseLayout({grid:{rows:2, columns:1, roworder:"top to bottom"}, shapes:[zone(0,35,"--band-tight"), zone(50,100,"--band-loose"), zone(70,100,"--band-loose"), ...lowB, ...hiB],
+    yaxis:{domain:[0.62,1], range:[5,95], gridcolor: css("--grid"), title:{text:"指数"}}, yaxis2:{domain:[0,0.56], range:[0,1], tickformat:".0%", gridcolor: css("--grid"), title:{text:"建议比例"}},
     xaxis:{type:"date", gridcolor: css("--grid"), anchor:"y2"}, showlegend:false, margin:{l:56, r:16, t:6, b:30}}), cfg);
   show(n - 1);
+  const gr = k => { Plotly.relayout("cGuide", {"xaxis.range": [k === "all" ? G.dates[0] : G.btc_start, G.dates[n - 1]]});
+    document.querySelectorAll("[data-gr]").forEach(b => b.classList.toggle("on", b.dataset.gr === k)); };
+  document.querySelectorAll("[data-gr]").forEach(b => b.onclick = () => gr(b.dataset.gr));
+  gr("etf");
   const el = document.getElementById("cGuide");
   el.on("plotly_hover", ev => { const x = String(ev.points[0].x).slice(0, 10); const i = G.dates.indexOf(x); if (i >= 0) show(i); });
   el.on("plotly_unhover", () => show(n - 1));
@@ -665,9 +687,9 @@ if (!D.bt || !D.bt.portfolio){ document.getElementById("pfCard").style.display =
 else {
   const P = D.bt.portfolio, E = P.btc_era, pc = (v, s=true) => v == null ? "—" : (s && v > 0 ? "+" : "") + (v*100).toFixed(1) + "%";
   const wtxt = o => Object.entries(o).map(([k, v]) => `${k} ${(v*100).toFixed(0)}%`).join("、");
-  document.getElementById("pfRule").textContent = `目标比例:${wtxt(P.weights)}。规则(事先定好):综合指数 20 日均值低于 35 连续 20 天 → 比特币和股票各减一半,腾出的钱放现金;高于 50 连续 20 天 → 恢复。美债不动。信号次日执行,调仓扣 0.05%。③、⑤ 只作对照,不按结果挑。`;
+  document.getElementById("pfRule").textContent = `目标比例:${wtxt(P.weights)}。规则(事先定好):综合指数 20 日均值低于 35 连续 20 天 → 比特币和股票各减一半,腾出的钱放现金;高于 50 连续 20 天 → 恢复。美债不动。宽松加码 A:高于 70 连续 20 天 → ${wtxt(P.loose_weights)},跌回 60 以下连续 20 天退出。加码 B:联储总资产 13 周增长超过 5% 连续 10 天 → 同样加码,扩表停止(13 周变化转负)连续 20 天退出。信号次日执行,调仓扣 0.05%。③、⑤ 只作对照,不按结果挑。`;
   const T = P.today;
-  document.getElementById("pfToday").innerHTML = `<b>今天(${T.date})主方案:${T.signal >= 1 ? "满仓" : "风险资产减半"}</b>。对应比例:${wtxt(T.alloc)}。`;
+  document.getElementById("pfToday").innerHTML = `<b>今天(${T.date})主方案:${T.signal >= 2 ? "宽松加码" : T.signal >= 1 ? "正常持有" : "风险资产减半"}</b>。对应比例:${wtxt(T.alloc)}。`;
   const cols = [css("--muted"), css("--p1"), css("--p2"), css("--ink")];
   Plotly.newPlot("cPf", Object.entries(E.equity).map(([n, y], i) => ({x: E.dates, y, type:"scatter", mode:"lines", name:n,
       line:{color: cols[i % 4], width: i === 1 ? 2.4 : 1.4, dash: i === 0 ? "dot" : "solid"}, hovertemplate: n + " %{y:.2f}<extra></extra>"})),
@@ -678,10 +700,12 @@ else {
   const L = P.long;
   document.getElementById("pfLongW").textContent = `把比特币那份按比例分给其他资产:${wtxt(L.weights)}。`;
   tbl("pfLong", ["方案", ...L.periods.flatMap(x => [`${x} 年化`, "回撤", "夏普"])], L.rows.map(r => [r[0], ...L.periods.flatMap((_, i) => [pc(r[1+3*i], false), pc(r[2+3*i]), r[3+3*i] == null ? "—" : r[3+3*i].toFixed(2)])]));
+  if (P.loose_segments) tbl("pfLoose", [`宽松加码 ${(P.guide && P.guide.mode) || "A"} 开始`, "结束", "天数", "期间美股 VTI", "期间 VTI 最大回撤"], P.loose_segments.map(r => [r[0], r[1], r[2], pc(r[3]), pc(r[4])]));
+  if (P.ref_2020) tbl("pfRef", ["参考:2020–2023(ETF 前比特币)", "总收益", "年化", "最大回撤", "夏普"], P.ref_2020.map(r => [r[0], pc(r[1]), pc(r[2], false), pc(r[3]), r[4] == null ? "—" : r[4].toFixed(2)]));
   const br = [];
   [["2024 起(含 BTC)", E.boot], ["2004 起(股债)", L.boot]].forEach(([lab, b]) => {
     Object.entries(b).filter(([k]) => !k.startsWith("_")).forEach(([k, v]) => br.push([lab, k, pc(v.p10), pc(v.p50), pc(v.p90), pc(v.dd50), (v.loss20*100).toFixed(0) + "%"]));
-    if (b._beat) br.push([lab, "择时一年后胜过不择时的概率", Object.values(b._beat).map(v => (v*100).toFixed(0) + "%").join(""), "", "", "", ""]);
+    if (b._beat) Object.entries(b._beat).forEach(([k, v]) => br.push([lab, `${k} 一年后胜过一直持有的概率`, (v*100).toFixed(0) + "%", "", "", "", ""]));
   });
   tbl("pfBoot", ["样本", "方案", "差(10%)", "中间(50%)", "好(90%)", "一年内回撤中位数", "亏超 20% 概率"], br);
 }
