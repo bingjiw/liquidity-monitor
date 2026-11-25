@@ -414,6 +414,8 @@ else {
   document.getElementById("btNow").innerHTML =
     `<div>截至 ${now.date}:净流动性 13 周变化 <b class="${now.net_liq_chg >= 0 ? "pos" : "neg"}">${now.net_liq_chg >= 0 ? "+" : ""}${fmt(now.net_liq_chg, 0)}</b> 十亿美元。</div>` +
     `<div style="margin-top:6px">${turn}</div>` +
+    (() => { const lv = B.rules.find(r => r.key === "lvl"), cb = B.rules.find(r => r.key === "combo"); const L = x => Math.round(x.position[x.position.length - 1] * 100) + "%";
+      return lv && cb ? `<div class="sub" style="margin-top:6px">对照:综合指数规则 ① 当前 ${L(lv)};候选组合(①或③任一减仓就半仓)当前 ${L(cb)}。2004–2018 的检验显示 ③ 单独使用在 2008 年失效,见下面历史模拟里的“更早样本外”。</div>` : ""; })() +
     `<div class="sub" style="margin-top:6px">辅助观察:5 年美债 13 周变化 ${now.ust5_chg >= 0 ? "+" : ""}${fmt(now.ust5_chg, 2)} 个百分点${now.rate_ok ? "" : "(利率冲击中,注意风险)"}。</div>`;
   const bandsOf = pos => {
     const out = []; let s0 = null;
@@ -432,7 +434,7 @@ else {
     baseLayout({shapes: bandsOf(nlRule.position), bargap: 0, yaxis: {gridcolor: css("--grid"), zerolinecolor: css("--muted")}}), cfg);
 
   // ---- 历史模拟
-  const RC = {bh: "--muted", lvl: "--p2", trd: "--p4", nl: "--p1", nlr: "--p5", ma: "--p3"};
+  const RC = {bh: "--muted", lvl: "--p2", trd: "--p4", nl: "--p1", nlr: "--p5", ma: "--p3", combo: "--ink"};
   const st = {asset: "SPY", period: B.periods.find(p => p.startsWith("全期")) || B.periods[0], rule: "nl"};
   const pct = (v, nd = 1, sign = false) => v == null ? "—" : (sign && v >= 0 ? "+" : "") + (v * 100).toFixed(nd) + "%";
   const lastD = B.dates[B.dates.length - 1];
