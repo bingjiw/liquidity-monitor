@@ -208,6 +208,22 @@ details{margin-top:10px} summary{cursor:pointer;color:var(--accent)}
     <div class="grid2"><div class="scroll"><table id="rpSnap"></table></div><div class="scroll"><table id="rpAfter"></table></div></div>
   </div>
 
+  <div class="card" id="pfCard">
+    <h2>综合组合:比特币 + 美股 + 美债 + 现金,一个流动性信号统一调仓</h2>
+    <div class="sub" id="pfRule"></div>
+    <div id="pfToday" class="verdict" style="margin-top:8px"></div>
+    <h3 style="margin:14px 0 4px">2024-01-11 起(含比特币),1 元起步</h3>
+    <div id="cPf" class="chart" style="height:300px"></div>
+    <div class="scroll"><table id="pfTbl"></table></div>
+    <div class="scroll" style="margin-top:8px"><table id="pfSingle"></table></div>
+    <h3 style="margin:14px 0 4px">2004 年起(不含比特币):股债部分长期是否站得住</h3>
+    <div class="sub" id="pfLongW"></div>
+    <div class="scroll"><table id="pfLong"></table></div>
+    <h3 style="margin:14px 0 4px">未来一年推演(不是预测)</h3>
+    <div class="scroll"><table id="pfBoot"></table></div>
+    <div class="note">把历史每日收益按 63 天一段打乱重抽,模拟 5000 个“未来一年”,看结果的范围。它假设未来和抽样那段历史相似;如果出现历史上没有的冲击,真实结果会落在范围之外。</div>
+  </div>
+
   <div class="card" id="btcCard">
     <h2>比特币与流动性(只看 2024-01 现货 ETF 上市之后)</h2>
     <div class="sub">机构通过 ETF 大举买入之后,比特币才更像一项受美元流动性影响的资产;更早的“小圈子时代”不纳入。样本不到 3 年,只能当参考。</div>
@@ -587,6 +603,33 @@ else {
   document.querySelectorAll("button[data-rp]").forEach(b => b.onclick = () => { rp.date = b.dataset.rp; snap(); });
   snap();
   document.getElementById("cReplay").on("plotly_click", ev => { if (ev.points && ev.points[0]){ rp.date = String(ev.points[0].x).slice(0, 10); snap(); } });
+}
+
+
+// 综合组合
+if (!D.bt || !D.bt.portfolio){ document.getElementById("pfCard").style.display = "none"; }
+else {
+  const P = D.bt.portfolio, E = P.btc_era, pc = (v, s=true) => v == null ? "—" : (s && v > 0 ? "+" : "") + (v*100).toFixed(1) + "%";
+  const wtxt = o => Object.entries(o).map(([k, v]) => `${k} ${(v*100).toFixed(0)}%`).join("、");
+  document.getElementById("pfRule").textContent = `目标比例:${wtxt(P.weights)}。规则(事先定好):综合指数 20 日均值低于 35 连续 20 天 → 比特币和股票各减一半,腾出的钱放现金;高于 50 连续 20 天 → 恢复。美债不动。信号次日执行,调仓扣 0.05%。③、⑤ 只作对照,不按结果挑。`;
+  const T = P.today;
+  document.getElementById("pfToday").innerHTML = `<b>今天(${T.date})主方案:${T.signal >= 1 ? "满仓" : "风险资产减半"}</b>。对应比例:${wtxt(T.alloc)}。`;
+  const cols = [css("--muted"), css("--p1"), css("--p2"), css("--ink")];
+  Plotly.newPlot("cPf", Object.entries(E.equity).map(([n, y], i) => ({x: E.dates, y, type:"scatter", mode:"lines", name:n,
+      line:{color: cols[i % 4], width: i === 1 ? 2.4 : 1.4, dash: i === 0 ? "dot" : "solid"}, hovertemplate: n + " %{y:.2f}<extra></extra>"})),
+    baseLayout({showlegend:true, legend:{orientation:"h", y:-0.15}, margin:{l:56, r:16, t:10, b:60}, yaxis:{gridcolor: css("--grid"), title:{text:"资金(起点 = 1)"}}}), cfg);
+  const tbl = (id, h, rows) => document.getElementById(id).innerHTML = "<tr>" + h.map(x => `<th>${x}</th>`).join("") + "</tr>" + rows.map(r => "<tr>" + r.map(x => `<td>${x}</td>`).join("") + "</tr>").join("");
+  tbl("pfTbl", ["方案", "总收益", "年化", "最大回撤", "波动", "夏普", "调仓"], E.rows.map(r => [r[0], pc(r[1]), pc(r[2], false), pc(r[3]), pc(r[4], false), r[5] == null ? "—" : r[5].toFixed(2), r[6]]));
+  tbl("pfSingle", ["对照:单一资产一直持有", "总收益", "年化", "最大回撤", "夏普"], E.single.map(r => [r[0], pc(r[1]), pc(r[2], false), pc(r[3]), r[4] == null ? "—" : r[4].toFixed(2)]));
+  const L = P.long;
+  document.getElementById("pfLongW").textContent = `把比特币那份按比例分给其他资产:${wtxt(L.weights)}。`;
+  tbl("pfLong", ["方案", ...L.periods.flatMap(x => [`${x} 年化`, "回撤", "夏普"])], L.rows.map(r => [r[0], ...L.periods.flatMap((_, i) => [pc(r[1+3*i], false), pc(r[2+3*i]), r[3+3*i] == null ? "—" : r[3+3*i].toFixed(2)])]));
+  const br = [];
+  [["2024 起(含 BTC)", E.boot], ["2004 起(股债)", L.boot]].forEach(([lab, b]) => {
+    Object.entries(b).filter(([k]) => !k.startsWith("_")).forEach(([k, v]) => br.push([lab, k, pc(v.p10), pc(v.p50), pc(v.p90), pc(v.dd50), (v.loss20*100).toFixed(0) + "%"]));
+    if (b._beat) br.push([lab, "择时一年后胜过不择时的概率", Object.values(b._beat).map(v => (v*100).toFixed(0) + "%").join(""), "", "", "", ""]);
+  });
+  tbl("pfBoot", ["样本", "方案", "差(10%)", "中间(50%)", "好(90%)", "一年内回撤中位数", "亏超 20% 概率"], br);
 }
 
 // 比特币
