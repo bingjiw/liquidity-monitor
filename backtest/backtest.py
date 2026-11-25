@@ -22,12 +22,13 @@ sys.path.insert(0, str(ROOT))
 from pit import PUB_LAG  # noqa: E402
 from liquidity_monitor import score  # noqa: E402
 
-START = "2019-03-15"
+START = "2004-01-02"          # 2026-11 起把数据补到 2003 年,规则不变,多出 2004~2018 这段“更早的样本外”
 SPLIT = "2023-01-01"          # 之前样本内,之后样本外
 COST = 0.0005                 # 每换 100% 仓位的成本
-PERIODS = [("样本内 2019-03~2022-12", START, "2022-12-31"),
+PERIODS = [("更早样本外 2004~2018", START, "2019-03-14"),
+           ("样本内 2019-03~2022-12", "2019-03-15", "2022-12-31"),
            ("样本外 2023-01~至今", SPLIT, "2100-01-01"),
-           ("全期", START, "2100-01-01")]
+           ("全期 2004~至今", START, "2100-01-01")]
 
 # 规则参数(事先定的粗档,不做细调):13 周 ≈ 65 个工作日,确认 20 个工作日 ≈ 一个月
 NL_WIN, RATE_WIN, RATE_JUMP, CONFIRM, STEP = 65, 65, 0.75, 20, 0.25
@@ -79,6 +80,8 @@ def rules(idx, F, S, spy):
         "④ 净流动性 + 利率冲击(5年债13周升>0.75点),各扣25%": 1 - STEP * (1 - nl_ok) - STEP * (1 - rate_ok),
         "参考:SPY 跌破200日线 满5天→50%(纯价格趋势)": persist(below, ~below, 5, 0.5),
     }
+    # 候选(2026-11-25 补 2004~2018 数据后发现 ③ 在早年失效才提出,属于看过数据后的选择,要打折看)
+    R["⑤ 候选:①或③任一减仓就半仓"] = pd.concat([R[list(R)[1]], R[list(R)[3]]], axis=1).min(axis=1)
     extra = {"sm": sm, "base": base, "nl": nl, "u5": u5, "nl_ok": nl_ok, "rate_ok": rate_ok}
     return R, extra
 
@@ -91,6 +94,8 @@ RULE_META = [
     ("nl", "净流动性(推荐)", "净流动性(联储总资产 − TGA − 逆回购)13 周变化连续 20 天为负 → 半仓;连续 20 天为正 → 满仓。"),
     ("nlr", "净流动性 + 利率冲击", "净流动性收缩扣 25%,5 年美债 13 周上升超过 0.75 个百分点再扣 25%(100% / 75% / 50%)。"),
     ("ma", "参考·200 日线", "SPY 跌破 200 日均线连续 5 天 → 半仓;站回 5 天 → 满仓。纯价格趋势,不看流动性。"),
+    ("combo", "指数+净流动性(候选)", "综合指数水平规则 ① 或净流动性规则 ③ 任何一个处于减仓状态 → 半仓;两个都满仓才满仓。"
+     "这是补上 2004–2018 数据、看到 ③ 在 2008 年失效之后才提出的组合,没有经过“事先定好再检验”,结果要打折看。"),
 ]
 FWD = 63  # “之后三个月”= 63 个交易日
 
@@ -174,12 +179,12 @@ def run(f: pd.DataFrame | None = None, out: Path = ROOT / "output") -> dict:
         for n in [5, 10, 20, 40]:
             pos = persist(c < 0, c > 0, n, 0.5)
             row = []
-            for _, a, b in PERIODS[:2]:
+            for _, a, b in PERIODS[:3]:
                 p = perf(pos, r, cash, a, b)
                 row.append(p["cagr"] - const_benchmark(p["exposure"], r, cash, a, b))
-            cells.append(f"{row[0]:+.1%} / {row[1]:+.1%}")
+            cells.append(f"{row[0]:+.1%} / {row[1]:+.1%} / {row[2]:+.1%}")
         L.append(f"| {w} 天 | " + " | ".join(cells) + " |")
-    L += ["", "格式:样本内 / 样本外。", ""]
+    L += ["", "格式:更早样本外 2004~2018 / 样本内 2019~2022 / 样本外 2023~。", ""]
     # 推荐规则的切换记录
     pos = R["③ 推荐:净流动性13周变化<0 满20天→50%,>0 满20天→100%"]
     ch = pos[pos.diff().fillna(0) != 0]
@@ -214,7 +219,7 @@ def run(f: pd.DataFrame | None = None, out: Path = ROOT / "output") -> dict:
                 "net_liq_ok": bool(last["net_liq_ok"]), "rate_ok": bool(last["rate_ok"]),
                 "streak": streak, "confirm": CONFIRM, "low_pos": LOW_POS},
         "table": [{"rule": n, **{k: (round(v, 4) if isinstance(v, float) else v) for k, v in m.items()}}
-                  for n, m in res["SPY"]["全期"].items()],
+                  for n, m in res["SPY"]["全期 2004~至今"].items()],
         "table_oos": [{"rule": n, **{k: (round(v, 4) if isinstance(v, float) else v) for k, v in m.items()}}
                       for n, m in res["SPY"]["样本外 2023-01~至今"].items()],
         "rules": [],
@@ -239,6 +244,7 @@ def run(f: pd.DataFrame | None = None, out: Path = ROOT / "output") -> dict:
     j["split"] = SPLIT
     qqq = pd.read_csv(ROOT / "output" / "market.csv", index_col=0, parse_dates=True)["QQQ"].reindex(idx).ffill()
     j["qqq"] = [None if pd.isna(x) else round(float(x), 2) for x in qqq]
+    j["index_pit"] = [None if pd.isna(x) else round(float(x), 1) for x in sig["liquidity_index_pit"]]
     (out / "backtest.json").write_text(json.dumps(j, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     return j
 

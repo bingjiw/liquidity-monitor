@@ -17,22 +17,27 @@ RAW_SERIES = {
     "tga":             ("财政部 TGA", "十亿美元", "A 钱的数量", None),
     "rrp":             ("隔夜逆回购", "十亿美元", "A 钱的数量", None),
     "net_liq":         ("净流动性(总资产 − TGA − 逆回购)", "十亿美元", "A 钱的数量", None),
-    "fed_bills_chg":   ("联储持有短债四周变化", "十亿美元", "A 钱的数量", None),
+    "fed_bills_chg":   ("联储持有短债四周变化(含 MBS 再投资,不等于 RMP)", "十亿美元", "A 钱的数量", None),
     "sofr_iorb":       ("SOFR − IORB", "BP", "B 回购管道价格", 10),
     "sofr99_iorb":     ("SOFR99 − IORB", "BP", "B 回购管道价格", 25),
     "tgcr_rrp":        ("TGCR − 逆回购利率", "BP", "B 回购管道价格", None),
+    "dvp_iorb":        ("OFR 双边回购(DVP)隔夜利率 − IORB", "BP", "B 回购管道价格", None),
+    "dvp_vol":         ("OFR 双边回购隔夜成交量", "十亿美元", "B 回购管道价格", None),
     "srf":             ("SRF 等回购操作用量", "十亿美元", "B 回购管道价格", 10),
     "ccc_oas":         ("CCC 及以下 OAS", "%", "C 信用价格", 12.15),
+    "baa_spread":      ("Baa 公司债 − 10 年美债利差(长历史)", "%", "C 信用价格", None),
     "ccc_cost_approx": ("CCC 借钱成本(5 年美债 + CCC OAS)", "%", "C 信用价格", None),
     "hy_oas":          ("高收益债 OAS", "%", "C 信用价格", None),
     "ig_oas":          ("投资级 OAS", "%", "C 信用价格", None),
     "real_policy_rate":("实际政策利率(EFFR − 核心 PCE)", "%", "D 利率与政策", None),
     "tips5":           ("5 年 TIPS 实际收益率", "%", "D 利率与政策", None),
+    "tips10":          ("10 年 TIPS 实际收益率(观察黄金用,不计分)", "%", "D 利率与政策", None),
     "term_premium":    ("10 年期限溢价", "%", "D 利率与政策", None),
     "core_pce_yoy":    ("核心 PCE 同比", "%", "D 利率与政策", None),
     "vix":             ("VIX", "点", "E 市场压力与美元", None),
     "usdjpy":          ("美元兑日元", "日元", "E 市场压力与美元", None),
     "nfci":            ("芝加哥联储 NFCI(正 = 偏紧)", "", "E 市场压力与美元", 0),
+    "ofr_fsi":         ("OFR 金融压力指数(正 = 压力)", "", "E 市场压力与美元", 0),
     "stlfsi":          ("圣路易斯联储金融压力指数(正 = 压力)", "", "E 市场压力与美元", 0),
 }
 
@@ -55,8 +60,11 @@ def _col(df: pd.DataFrame, c: str, nd: int):
 
 
 def write_dashboard(f: pd.DataFrame, sc: pd.DataFrame, alerts: list[str], cal: pd.DataFrame,
-                    path: Path, log_path: Path, bt: dict | None = None) -> None:
+                    path: Path, log_path: Path, bt: dict | None = None, w: dict | None = None,
+                    asof: dict | None = None, rs: dict | None = None) -> None:
     from liquidity_monitor import PILLAR_NAMES, PILLAR_WEIGHTS, SCORED
+    from watch import calendar_rows
+    asof = asof or {}
 
     valid = sc.dropna(subset=["liquidity_index"])
     idx = valid.index
@@ -69,7 +77,7 @@ def write_dashboard(f: pd.DataFrame, sc: pd.DataFrame, alerts: list[str], cal: p
         "pillars_used": _col(valid, "pillars_used", 0),
         "pillars": {p: {"name": PILLAR_NAMES[p], "weight": w, "z": _col(valid, p, 2)}
                     for p, w in PILLAR_WEIGHTS.items()},
-        "raw": {k: {"name": n, "unit": u, "group": g, "threshold": t,
+        "raw": {k: {"name": n, "unit": u, "group": g, "threshold": t, "asof": asof.get(k),
                     "v": _col(ff, k, 3)}
                 for k, (n, u, g, t) in RAW_SERIES.items() if k in ff},
         "contrib": [{"pillar": PILLAR_NAMES[p], "name": name,
@@ -77,8 +85,9 @@ def write_dashboard(f: pd.DataFrame, sc: pd.DataFrame, alerts: list[str], cal: p
                      if f"z_{c}" in valid and pd.notna(valid[f"z_{c}"].ffill().iloc[-1]) else None}
                     for c, p, _, name in SCORED],
         "alerts": alerts,
-        "calendar": [{"date": r.issue_date.strftime("%Y-%m-%d"), "gross_bn": _clean(round(float(r.gross_bn), 1)) if pd.notna(r.gross_bn) else None,
-                      "detail": r.detail} for r in cal.itertuples()] if not cal.empty else [],
+        "calendar": calendar_rows(cal, w, 30),
+        "watch": w,
+        "research": rs,
         "bt": bt,
         "log": json.loads(pd.read_csv(log_path).to_json(orient="records")) if log_path.exists() else [],
     }
@@ -93,7 +102,10 @@ TEMPLATE = r"""<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>美元流动性仪表盘</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.2/plotly.min.js"></script>
+<!-- Plotly 放在仓库 docs/ 里随页面一起发布;部分网络(如中国大陆)打不开 cdnjs,图表会空白。本地文件失败时再退回 CDN -->
+<script src="plotly.min.js"></script>
+<script>window.Plotly || document.write('<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"><\/script>');</script>
+<script>window.Plotly || document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.2/plotly.min.js"><\/script>');</script>
 <style>
 :root{
   --bg:#f6f7f9; --card:#ffffff; --ink:#1b1f24; --muted:#5f6b7a; --line:#e3e7ec; --grid:#eef1f4;
@@ -143,6 +155,15 @@ th{color:var(--muted);font-weight:600}
 @media (max-width:760px){.grid2{grid-template-columns:1fr}.big{font-size:44px}.chart{height:300px}}
 .note{color:var(--muted);font-size:13px;margin-top:8px}
 .scroll{overflow-x:auto}
+select{max-width:100%}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media (max-width:900px){.grid3{grid-template-columns:1fr}}
+.wbox{background:var(--bg);border-radius:10px;padding:12px;font-size:14px}
+.wbox h3{font-size:14px;margin:0 0 6px;color:var(--muted);font-weight:600}
+.wbox .v{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}
+.chk{margin:4px 0}
+.verdict{border-left:3px solid var(--accent);padding:6px 10px;margin:8px 0;background:var(--bg);border-radius:4px;font-size:14px}
+details{margin-top:10px} summary{cursor:pointer;color:var(--accent)}
 </style>
 </head>
 <body>
@@ -175,16 +196,42 @@ th{color:var(--muted);font-weight:600}
     <div class="note">净流动性(联储总资产 − TGA − 逆回购)13 周变化,十亿美元。红色底色 = 规则处于半仓的时段。规则:13 周变化连续 20 个交易日为负 → 半仓;连续 20 个交易日为正 → 满仓。为什么选它,见下面的历史模拟。</div>
   </div>
 
+  <div class="card" id="replayCard">
+    <h2>历史回放:每个阶段仪表盘怎么说、指引怎么变、结果如何</h2>
+    <div class="sub">从上到下:① 当时能看到的综合指数(按数据公布滞后重算);② 净流动性 13 周变化;③ 规则给出的建议仓位;④ 按指引操作 vs 一直满仓的资金曲线。点图上任意一天,或在下面选日期,看那一天的完整读数。</div>
+    <div class="row" style="margin-top:10px" id="rpAsset"></div>
+    <div class="row" id="rpRule"></div>
+    <div id="cReplay" class="chart" style="height:680px"></div>
+    <div class="row" style="margin-top:6px"><label>回放日期 <input type="date" id="rpDate"></label>
+      <button data-rp="2008-09-15">2008 雷曼</button><button data-rp="2015-08-24">2015 人民币</button><button data-rp="2018-12-24">2018 缩表</button>
+      <button data-rp="2020-03-16">2020 疫情</button><button data-rp="2022-06-13">2022 加息</button><button data-rp="2025-04-08">2025 关税</button></div>
+    <div class="grid2"><div class="scroll"><table id="rpSnap"></table></div><div class="scroll"><table id="rpAfter"></table></div></div>
+  </div>
+
+  <div class="card" id="watchCard">
+    <h2>管道与砍仓观察(未经回测验证,不进仓位规则)</h2>
+    <div class="grid3">
+      <div class="wbox" id="wPipe"></div>
+      <div class="wbox" id="wReb"></div>
+      <div class="wbox" id="wCross"></div>
+    </div>
+    <div class="grid2" style="margin-top:12px">
+      <div><div class="sub">SOFR − IORB 近一年(BP),背景 = 分档</div><div id="cPipe" class="chart" style="height:220px"></div></div>
+      <div><div class="sub">黄金(GLD)与纳指(QQQ)20 日收益相关性</div><div id="cCorr" class="chart" style="height:220px"></div></div>
+    </div>
+    <div class="note" id="wNote"></div>
+  </div>
+
   <div class="card" id="simCard">
     <h2>历史模拟:用不同数据指导操作,结果如何</h2>
-    <div class="sub">2019-03 起,假如每天按某条规则调整美股仓位。信号按数据实际公布时间滞后计算,第二天执行,每次调仓扣 0.05% 成本,没买股票的钱拿联邦基金利率。</div>
+    <div class="sub">2004 年起,假如每天按某条规则调整美股仓位。规则是用 2019–2022 的数据定的,2004–2018 和 2023 年以后都是它没见过的数据。信号按数据实际公布时间滞后计算,第二天执行,每次调仓扣 0.05% 成本,没买股票的钱拿联邦基金利率。</div>
     <div class="row" style="margin-top:12px" id="simAsset"></div>
     <div class="row" id="simPeriod"></div>
     <div class="row" id="simRules"></div>
     <div id="simDesc" class="note" style="margin-top:0"></div>
     <h2 style="margin-top:14px;font-size:15px" id="simPxTitle"></h2>
     <div id="cSimPx" class="chart"></div>
-    <div class="note">红色底色 = 所选规则减仓的时段(颜色越深仓位越低)。虚线 = 样本内 / 样本外分界(2023-01)。</div>
+    <div class="note">红色底色 = 所选规则减仓的时段(颜色越深仓位越低)。虚线 = 样本内 / 样本外分界(2019-03 和 2023-01)。</div>
     <h2 style="margin-top:14px;font-size:15px">资金曲线(起点 = 1)</h2>
     <div id="cSimEq" class="chart"></div>
     <div class="note">粗线 = 所选规则。点击图例可隐藏或显示某条线。</div>
@@ -205,6 +252,12 @@ th{color:var(--muted);font-weight:600}
     <h2 style="margin-top:18px;font-size:15px">所选规则:每一次调仓</h2>
     <div class="scroll"><table id="simSegs"></table></div>
     <div class="note">历史表现不代表未来。2020 年疫情、2025 年 4 月关税这类突发暴跌,流动性数据事先看不出来。完整报告见仓库 output/backtest_summary.md。</div>
+  </div>
+
+  <div class="card" id="resCard">
+    <h2>新指标历史检验</h2>
+    <div class="sub" id="resSub"></div>
+    <div id="resBody"></div>
   </div>
 
   <div class="card">
@@ -246,8 +299,9 @@ th{color:var(--muted);font-weight:600}
     <div class="card">
       <h2>每日运行记录</h2>
       <div class="scroll"><table id="log"></table></div>
-      <h2 style="margin-top:18px">未来 30 天国债结算</h2>
+      <h2 style="margin-top:18px">未来 30 天日历</h2>
       <div class="scroll"><table id="cal"></table></div>
+      <div class="note" id="calNote"></div>
     </div>
   </div>
 
@@ -319,7 +373,7 @@ Plotly.newPlot("cPillars", pk.map((p,i) => ({x: D.dates, y: D.pillars[p].z, type
   baseLayout({showlegend: true, yaxis: {range: [-3.2,3.2], gridcolor: css("--grid"), zerolinecolor: css("--muted")}}), cfg);
 
 // 时间范围按钮,同时作用于三张图
-const ranges = [["1年",252],["3年",756],["5年",1260],["全部",0]];
+const ranges = [["1年",252],["3年",756],["5年",1260],["10年",2520],["全部",0]];
 const rb = document.getElementById("rangeBtns");
 function setRange(n){
   const x0 = n ? D.dates[Math.max(0, N - n)] : D.dates[0], x1 = D.dates[N-1];
@@ -343,7 +397,7 @@ function drawRaw(){
     hovertemplate: `%{y:,.2f} ${s.unit}<extra></extra>`}],
     baseLayout({shapes, xaxis: {gridcolor: css("--grid"), type:"date", range: xr}, yaxis: {gridcolor: css("--grid"), title: {text: s.unit}}}), cfg);
   const lv = s.v[li];
-  document.getElementById("rawNote").textContent = `最新 ${fmt(lv, 2)} ${s.unit}` + (s.threshold == null ? "" : ` · 红虚线 = 预警线 ${s.threshold}`);
+  document.getElementById("rawNote").textContent = `最新 ${fmt(lv, 2)} ${s.unit}` + (s.asof ? `(数据日期 ${s.asof})` : "") + (s.threshold == null ? "" : ` · 红虚线 = 预警线 ${s.threshold}`);
 }
 sel.onchange = drawRaw;
 drawRaw();
@@ -361,6 +415,8 @@ else {
   document.getElementById("btNow").innerHTML =
     `<div>截至 ${now.date}:净流动性 13 周变化 <b class="${now.net_liq_chg >= 0 ? "pos" : "neg"}">${now.net_liq_chg >= 0 ? "+" : ""}${fmt(now.net_liq_chg, 0)}</b> 十亿美元。</div>` +
     `<div style="margin-top:6px">${turn}</div>` +
+    (() => { const lv = B.rules.find(r => r.key === "lvl"), cb = B.rules.find(r => r.key === "combo"); const L = x => Math.round(x.position[x.position.length - 1] * 100) + "%";
+      return lv && cb ? `<div class="sub" style="margin-top:6px">对照:综合指数规则 ① 当前 ${L(lv)};候选组合(①或③任一减仓就半仓)当前 ${L(cb)}。2004–2018 的检验显示 ③ 单独使用在 2008 年失效,见下面历史模拟里的“更早样本外”。</div>` : ""; })() +
     `<div class="sub" style="margin-top:6px">辅助观察:5 年美债 13 周变化 ${now.ust5_chg >= 0 ? "+" : ""}${fmt(now.ust5_chg, 2)} 个百分点${now.rate_ok ? "" : "(利率冲击中,注意风险)"}。</div>`;
   const bandsOf = pos => {
     const out = []; let s0 = null;
@@ -379,10 +435,11 @@ else {
     baseLayout({shapes: bandsOf(nlRule.position), bargap: 0, yaxis: {gridcolor: css("--grid"), zerolinecolor: css("--muted")}}), cfg);
 
   // ---- 历史模拟
-  const RC = {bh: "--muted", lvl: "--p2", trd: "--p4", nl: "--p1", nlr: "--p5", ma: "--p3"};
-  const st = {asset: "SPY", period: B.periods[2], rule: "nl"};
+  const RC = {bh: "--muted", lvl: "--p2", trd: "--p4", nl: "--p1", nlr: "--p5", ma: "--p3", combo: "--ink"};
+  const st = {asset: "SPY", period: B.periods.find(p => p.startsWith("全期")) || B.periods[0], rule: "nl"};
   const pct = (v, nd = 1, sign = false) => v == null ? "—" : (sign && v >= 0 ? "+" : "") + (v * 100).toFixed(nd) + "%";
-  const periodRange = lab => lab.startsWith("样本内") ? [B.dates[0], "2022-12-31"] : lab.startsWith("样本外") ? [B.split, B.dates[B.dates.length - 1]] : [B.dates[0], B.dates[B.dates.length - 1]];
+  const lastD = B.dates[B.dates.length - 1];
+  const periodRange = lab => lab.startsWith("更早") ? [B.dates[0], "2019-03-14"] : lab.startsWith("样本内") ? ["2019-03-15", "2022-12-31"] : lab.startsWith("样本外") ? [B.split, lastD] : [B.dates[0], lastD];
   const chips = (id, items, key) => {
     const el = document.getElementById(id); el.innerHTML = "";
     items.forEach(([v, t, col]) => { const b = document.createElement("button"); b.textContent = t; b.dataset.v = v;
@@ -402,11 +459,11 @@ else {
     document.getElementById("simDesc").textContent = R.desc;
     document.getElementById("simPxTitle").textContent = `${st.asset} 走势与「${R.name}」的仓位`;
     const px = st.asset === "SPY" ? B.spy : B.qqq;
-    const split = {type:"line", xref:"x", yref:"paper", x0:B.split, x1:B.split, y0:0, y1:1, line:{color: css("--muted"), dash:"dot", width:1}};
+    const split = [B.split, "2019-03-15"].map(x => ({type:"line", xref:"x", yref:"paper", x0:x, x1:x, y0:0, y1:1, line:{color: css("--muted"), dash:"dot", width:1}}));
     const posTxt = R.position.map(p => Math.round(p * 100) + "%");
     Plotly.react("cSimPx", [{x: B.dates, y: px, type:"scatter", mode:"lines", line:{color: css("--ink"), width:1.5},
       customdata: posTxt, hovertemplate: `${st.asset} %{y:,.0f} · 仓位 %{customdata}<extra></extra>`}],
-      baseLayout({shapes: [...bandsOf(R.position), split], xaxis: {type:"date", range:[x0, x1], gridcolor: css("--grid")},
+      baseLayout({shapes: [...bandsOf(R.position), ...split], xaxis: {type:"date", range:[x0, x1], gridcolor: css("--grid")},
         yaxis: {type:"log", gridcolor: css("--grid")}}), cfg);
     const traces = B.rules.map(r => {
       const e = r.assets[st.asset].equity, base = i0 > 0 ? e[i0 - 1] : 1;
@@ -415,7 +472,7 @@ else {
         line:{color: css(RC[r.key]), width: sel ? 3 : 1.2, dash: r.key === "bh" ? "dot" : "solid"}, opacity: sel || r.key === "bh" ? 1 : 0.55,
         hovertemplate: "%{y:.2f}"};
     });
-    Plotly.react("cSimEq", traces, baseLayout({showlegend: true, shapes: [split], xaxis: {type:"date", range:[x0, x1], gridcolor: css("--grid")},
+    Plotly.react("cSimEq", traces, baseLayout({showlegend: true, shapes: split, xaxis: {type:"date", range:[x0, x1], gridcolor: css("--grid")},
       yaxis: {type:"log", gridcolor: css("--grid")}}), cfg);
     // 对比表
     document.getElementById("simTable").innerHTML =
@@ -447,6 +504,131 @@ else {
       : `<tr><td class="sub">这条规则从不调仓。</td></tr>`;
   }
   draw();
+}
+
+// 历史回放
+if (!D.bt || !D.bt.index_pit){ document.getElementById("replayCard").style.display = "none"; }
+else {
+  const B = D.bt, nl = B.rules.find(r => r.key === "nl"), bh = B.rules.find(r => r.key === "bh");
+  const rp = {asset: "SPY", date: null, rule: "nl"};
+  const cur = () => B.rules.find(r => r.key === rp.rule) || nl;
+  const rpRules = document.getElementById("rpRule");
+  B.rules.filter(r => ["nl","lvl","combo"].includes(r.key)).forEach(r => { const b = document.createElement("button"); b.textContent = r.name; b.dataset.v = r.key; b.onclick = () => { rp.rule = r.key; snap(); }; rpRules.appendChild(b); });
+  const bi = dstr => { let lo = 0, hi = B.dates.length - 1, a = 0; while (lo <= hi){ const m = (lo + hi) >> 1; if (B.dates[m] <= dstr){ a = m; lo = m + 1; } else hi = m - 1; } return a; };
+  const pc = (v, s = true) => v == null || isNaN(v) ? "—" : (s && v >= 0 ? "+" : "") + (v * 100).toFixed(1) + "%";
+  const rpChips = document.getElementById("rpAsset");
+  [["SPY","标普 500(SPY)"],["QQQ","纳斯达克 100(QQQ)"]].forEach(([v,t]) => { const b = document.createElement("button"); b.textContent = t; b.dataset.v = v; b.onclick = () => { rp.asset = v; snap(); }; rpChips.appendChild(b); });
+  function drawReplay(){
+    [...rpChips.children].forEach(b => b.classList.toggle("on", b.dataset.v === rp.asset));
+    [...rpRules.children].forEach(b => b.classList.toggle("on", b.dataset.v === rp.rule));
+    const nl = cur();
+    const eR = nl.assets[rp.asset].equity, eB = bh.assets[rp.asset].equity;
+    const dom = [[0.78,1],[0.53,0.74],[0.30,0.49],[0,0.26]];
+    const yax = (i, extra = {}) => Object.assign({domain: dom[i], gridcolor: css("--grid"), zerolinecolor: css("--muted")}, extra);
+    const bandsY = [[0,30,"--band-tight"],[30,45,"--band-semitight"],[45,55,"--band-neutral"],[55,70,"--band-semiloose"],[70,100,"--band-loose"]]
+      .map(([a,b,c]) => ({type:"rect", xref:"paper", yref:"y", x0:0, x1:1, y0:a, y1:b, fillcolor: css(c), line:{width:0}, layer:"below"}));
+    const lowBands = []; let s0 = null;
+    nl.position.forEach((p, i) => { if (p < 1 && s0 == null) s0 = i; if ((p >= 1 || i === nl.position.length - 1) && s0 != null){ lowBands.push({type:"rect", xref:"x", yref:"paper", x0:B.dates[s0], x1:B.dates[i], y0:0, y1:1, fillcolor: css("--tight"), opacity:0.07, line:{width:0}, layer:"below"}); s0 = null; } });
+    const vline = rp.date ? [{type:"line", xref:"x", yref:"paper", x0:rp.date, x1:rp.date, y0:0, y1:1, line:{color: css("--ink"), width:1, dash:"dot"}}] : [];
+    const tr = [
+      {x: B.dates, y: B.index_pit, type:"scatter", mode:"lines", line:{color: css("--accent"), width:1.4}, name:"综合指数", yaxis:"y", hovertemplate:"指数 %{y:.1f}<extra></extra>"},
+      {x: B.dates, y: B.net_liq_chg, type:"bar", marker:{color: B.net_liq_chg.map(v => v == null ? css("--neutral") : v >= 0 ? css("--loose") : css("--tight"))}, name:"净流动性 13 周变化", yaxis:"y2", hovertemplate:"净流动性 13 周 %{y:+,.0f} 十亿<extra></extra>"},
+      {x: B.dates, y: nl.position.map(p => p * 100), type:"scatter", mode:"lines", line:{color: css("--p2"), width:2, shape:"hv"}, name:"建议仓位", yaxis:"y3", hovertemplate:"建议仓位 %{y:.0f}%<extra></extra>"},
+      {x: B.dates, y: eB, type:"scatter", mode:"lines", line:{color: css("--muted"), width:1.2, dash:"dot"}, name:"一直满仓", yaxis:"y4", hovertemplate:"满仓 %{y:.2f}<extra></extra>"},
+      {x: B.dates, y: eR, type:"scatter", mode:"lines", line:{color: css("--p1"), width:2}, name:"按指引操作", yaxis:"y4", hovertemplate:"按指引 %{y:.2f}<extra></extra>"},
+    ];
+    Plotly.react("cReplay", tr, baseLayout({showlegend: true, legend:{orientation:"h", y:-0.06}, bargap:0, margin:{l:56, r:16, t:10, b:30},
+      shapes: [...bandsY, ...lowBands, ...vline],
+      yaxis: yax(0, {range:[0,100], title:{text:"指数"}}), yaxis2: yax(1, {title:{text:"十亿"}}),
+      yaxis3: yax(2, {range:[-5,105], title:{text:"仓位%"}}), yaxis4: yax(3, {type:"log", title:{text:"资金"}})}), cfg);
+  }
+  function snap(){
+    const dI = document.getElementById("rpDate");
+    if (!rp.date) rp.date = B.dates[B.dates.length - 1];
+    dI.value = rp.date;
+    const nl = cur();
+    const i = bi(rp.date), d = B.dates[i], k = idxOnOrBefore(d), last = B.dates.length - 1;
+    const px = rp.asset === "SPY" ? B.spy : B.qqq, eR = nl.assets[rp.asset].equity, eB = bh.assets[rp.asset].equity;
+    const [rn] = regime(B.index_pit[i]);
+    let h = `<tr><th colspan="2" style="text-align:left">${d} 当天仪表盘读数</th></tr>`;
+    h += `<tr><td>综合指数(当时可见)</td><td>${fmt(B.index_pit[i])}(${rn})</td></tr>`;
+    if (k >= 0) pk.forEach(p => h += `<tr><td>${D.pillars[p].name}</td><td class="${D.pillars[p].z[k] >= 0 ? "pos" : "neg"}">${fmt(D.pillars[p].z[k], 2)}</td></tr>`);
+    h += `<tr><td>净流动性 13 周变化</td><td class="${B.net_liq_chg[i] >= 0 ? "pos" : "neg"}">${fmt(B.net_liq_chg[i], 0)} 十亿</td></tr>`;
+    h += `<tr><td><b>建议仓位(${nl.name})</b></td><td><b>${Math.round(nl.position[i] * 100)}%</b></td></tr>`;
+    let st = i; while (st > 0 && nl.position[st - 1] === nl.position[i]) st--;
+    let en = i; while (en < last && nl.position[en + 1] === nl.position[i]) en++;
+    h += `<tr><td>这个仓位从哪天持续到哪天</td><td>${B.dates[st]} → ${en === last ? "至今" : B.dates[en]}(${en - st + 1} 个交易日)</td></tr>`;
+    document.getElementById("rpSnap").innerHTML = h;
+    const fw = n => { const j = Math.min(last, i + n); return j > i ? [eR[j] / eR[i] - 1, eB[j] / eB[i] - 1] : [null, null]; };
+    let a = `<tr><th style="text-align:left">从 ${d} 起</th><th>按指引</th><th>一直满仓</th><th>差</th></tr>`;
+    [["之后 1 个月",21],["之后 3 个月",63],["之后 1 年",252],["一直到今天", last - i]].forEach(([t, n]) => {
+      const [r, b] = fw(n); a += `<tr><td>${t}</td><td>${pc(r)}</td><td>${pc(b)}</td><td class="${r == null ? "" : r - b >= 0 ? "pos" : "neg"}">${r == null ? "—" : pc(r - b)}</td></tr>`; });
+    a += `<tr><td colspan="4" class="sub" style="text-align:left">${rp.asset} 价格 ${fmt(px[i], 0)}。“差”为正说明按指引操作比一直满仓好。</td></tr>`;
+    document.getElementById("rpAfter").innerHTML = a;
+    drawReplay();
+  }
+  document.getElementById("rpDate").onchange = e => { rp.date = e.target.value; snap(); };
+  document.querySelectorAll("button[data-rp]").forEach(b => b.onclick = () => { rp.date = b.dataset.rp; snap(); });
+  snap();
+  document.getElementById("cReplay").on("plotly_click", ev => { if (ev.points && ev.points[0]){ rp.date = String(ev.points[0].x).slice(0, 10); snap(); } });
+}
+
+// 管道与砍仓观察
+const W = D.watch;
+if (!W){ document.getElementById("watchCard").style.display = "none"; }
+else {
+  const P = W.pipe;
+  document.getElementById("wPipe").innerHTML = `<h3>回购管道 SOFR − IORB</h3>` +
+    `<div class="v">${P.bp == null ? "—" : fmt(P.bp, 0) + " BP"}</div>` +
+    `<div style="margin:6px 0"><span class="badge" style="background:${css(P.color)}">${P.tier}</span></div>` +
+    `<div class="sub">数据日期 ${P.date || "—"} · 已连续 ${P.streak} 天高于 IORB</div>` +
+    `<div class="sub">SOFR99 − IORB ${fmt(P.sofr99, 0)} BP · SRF 近 5 日最高 ${fmt(P.srf5, 1)} 十亿</div>` +
+    `<div class="sub">分档:≤0 宽松 / 0–3 正常 / 3–5 偏紧 / 5–10 紧张 / ≥10 瘫痪</div>`;
+  const RB = W.rebound;
+  document.getElementById("wReb").innerHTML = `<h3>反抽体检(三条都满足才算“没恶化”)</h3>` +
+    `<div class="v">${RB.passed} / ${RB.total}</div>` +
+    RB.conds.map(c => `<div class="chk"><b class="${c.ok == null ? "" : c.ok ? "pos" : "neg"}">${c.ok == null ? "—" : c.ok ? "✓" : "✗"}</b> ${c.name}<br><span class="sub">${c.value} · ${c.date || "无数据"}</span></div>`).join("");
+  const X = W.cross;
+  document.getElementById("wCross").innerHTML = X
+    ? `<h3>跨资产砍仓检测(${X.date})</h3>` +
+      `<div class="v ${X.alarm ? "neg" : ""}">${X.quadrant}</div>` +
+      `<div class="sub" style="margin:4px 0">${X.quadrant_note}</div>` +
+      `<div>近 5 日 QQQ <b class="${X.qqq5 >= 0 ? "pos" : "neg"}">${(X.qqq5*100).toFixed(1)}%</b> · GLD <b class="${X.gld5 >= 0 ? "pos" : "neg"}">${(X.gld5*100).toFixed(1)}%</b></div>` +
+      `<div>20 日相关 <b>${fmt(X.corr20, 2)}</b> · 近 20 日同日双跌 <b>${X.dd20}</b> 天</div>` +
+      (X.tips10_5d_bp == null ? "" : `<div class="sub">10 年 TIPS 5 日变化 ${X.tips10_5d_bp > 0 ? "+" : ""}${X.tips10_5d_bp} BP${X.gold_rate_diverge ? ",<b class='neg'>黄金逆着实际利率下跌,疑似被砍仓</b>" : ""}</div>`) +
+      (X.alarm ? `<div class="neg" style="margin-top:4px"><b>砍仓警报</b></div>` : "")
+    : `<h3>跨资产砍仓检测</h3><div class="sub">缺少 GLD 价格数据</div>`;
+  const vl = W.vix_latest, mg = W.margin;
+  document.getElementById("wNote").innerHTML =
+    (vl ? `最新 VIX ${fmt(vl.value, 2)}(${vl.date},FRED 滞后时用 Yahoo 当日收盘补)。` : "") +
+    (mg ? ` 券商融资余额(FINRA,月度):${mg.month} 为 ${fmt(mg.value_bn, 0)} 十亿美元,同比 ${(mg.yoy*100).toFixed(1)}%,距 ${mg.peak_month} 峰值 ${(mg.from_peak*100).toFixed(1)}%。` : " 券商融资余额暂未获取。") +
+    " 这些指标是和外部分析对比后加入的,历史检验见下面“新指标历史检验”。";
+  const tb = [[-100,0,"--band-loose"],[0,3,"--band-neutral"],[3,5,"--band-semitight"],[5,10,"--band-tight"],[10,1000,"--band-tight"]]
+    .map(([a,b,c]) => ({type:"rect", xref:"paper", x0:0, x1:1, y0:a, y1:b, fillcolor: css(c), line:{width:0}, layer:"below"}));
+  const ys = P.hist.bp, ylo = Math.min(-5, ...ys) - 2, yhi = Math.max(12, ...ys) + 2;
+  Plotly.newPlot("cPipe", [{x: P.hist.dates, y: ys, type:"scatter", mode:"lines", line:{color: css("--accent"), width:1.6, shape:"hv"},
+    hovertemplate: "%{y:.0f} BP<extra></extra>"}], baseLayout({shapes: tb, yaxis:{range:[ylo, yhi], gridcolor: css("--grid"), zerolinecolor: css("--muted")}}), cfg);
+  if (X) Plotly.newPlot("cCorr", [{x: X.hist.dates, y: X.hist.corr20, type:"scatter", mode:"lines", line:{color: css("--p2"), width:1.6},
+    hovertemplate: "%{y:.2f}<extra></extra>"}], baseLayout({shapes:[{type:"line", xref:"paper", x0:0, x1:1, y0:0.5, y1:0.5, line:{color: css("--tight"), dash:"dash", width:1}}],
+    yaxis:{range:[-1,1], gridcolor: css("--grid"), zerolinecolor: css("--muted")}}), cfg);
+  else document.getElementById("cCorr").style.display = "none";
+}
+
+// 新指标历史检验
+const RS = D.research;
+if (!RS){ document.getElementById("resCard").style.display = "none"; }
+else {
+  document.getElementById("resSub").textContent = `数据截至 ${RS.asof}。只做研究,不进仓位规则;样本小的结论只能当参考。完整版见仓库 output/research_summary.md。`;
+  const tbl = t => `<div class="scroll"><table><tr>${t.headers.map(h => `<th>${h}</th>`).join("")}</tr>` +
+    t.rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("") + `</table></div>`;
+  document.getElementById("resBody").innerHTML = RS.sections.map(s =>
+    `<h2 style="margin-top:16px;font-size:15px">${s.title}</h2>` +
+    (s.verdict ? `<div class="verdict">${s.verdict}</div>` : "") +
+    `<div class="note" style="margin-top:0">${s.note}</div>` + tbl(s) +
+    (s.summary ? `<div class="sub" style="margin-top:8px">汇总</div>` + tbl(s.summary) : "") +
+    (s.diverge ? `<div class="note">黄金在 10 年 TIPS 实际利率 5 日下降时 5 日跌超 2%:共 ${s.diverge.days} 天(${s.diverge.episodes} 段),之后 GLD 20 日 ${s.diverge.gld20}、60 日 ${s.diverge.gld60}(所有日子平均 ${s.diverge.base20} / ${s.diverge.base60})。</div>` : "") +
+    (s.detail ? `<details><summary>最近 15 次大涨明细</summary>${tbl(s.detail)}</details>` : "")
+  ).join("");
 }
 
 // 两天对比
@@ -487,8 +669,12 @@ document.getElementById("log").innerHTML = `<tr><th>运行日</th><th>数据日<
 
 // 结算日历
 document.getElementById("cal").innerHTML = D.calendar.length
-  ? `<tr><th>结算日</th><th>毛额(十亿美元)</th><th>品种</th></tr>` + D.calendar.map(c => `<tr><td>${c.date}</td><td>${c.gross_bn == null ? "待公布" : fmt(c.gross_bn)}</td><td>${c.detail}</td></tr>`).join("")
+  ? `<tr><th>日期</th><th>结算毛额</th><th>到期</th><th>净额</th><th>事件 / 品种</th></tr>` + D.calendar.map(c =>
+      `<tr><td>${c.date}</td><td>${c.pending ? "待公布" : fmt(c.gross_bn)}</td><td>${fmt(c.mature_bn)}</td>` +
+      `<td class="${c.net_bn == null ? "" : c.net_bn > 0 ? "neg" : "pos"}">${fmt(c.net_bn)}</td>` +
+      `<td style="text-align:left">${[...c.events.map(e => `<b>${e}</b>`), c.detail].filter(Boolean).join(" · ")}</td></tr>`).join("")
   : `<tr><td class="sub">暂无数据</td></tr>`;
+document.getElementById("calNote").textContent = "金额单位十亿美元。净额 = 结算毛额 − 到期(约数),正数(红)表示从市场抽走现金。";
 </script>
 </body>
 </html>

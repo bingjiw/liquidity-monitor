@@ -13,7 +13,8 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-START = "2018-01-01"
+START = "2003-01-01"
+EXTRA = {"GLD": "GLD", "IWM": "IWM", "SOXX": "SOXX", "HYG": "HYG", "^VIX": "VIX_Y"}
 OUT = Path(__file__).resolve().parent.parent / "output" / "market.csv"
 
 
@@ -26,8 +27,10 @@ def yahoo(sym: str) -> pd.Series:
     r.raise_for_status()
     res = r.json()["chart"]["result"][0]
     idx = pd.to_datetime(res["timestamp"], unit="s").normalize()
-    adj = res["indicators"]["adjclose"][0]["adjclose"]
-    return pd.Series(adj, index=idx, name=sym).dropna()
+    ind = res["indicators"]
+    adj = ind["adjclose"][0]["adjclose"] if ind.get("adjclose") else ind["quote"][0]["close"]
+    s = pd.Series(adj, index=idx, name=sym).dropna()
+    return s[~s.index.duplicated(keep="last")]
 
 
 def fred(sid: str) -> pd.Series:
@@ -50,6 +53,13 @@ def main() -> int:
                 print(f"[警告] {name} 失败: {e}", file=sys.stderr)
     if not cols:
         return 1
+    # 观察指标用的附加资产(只用 Yahoo,失败就跳过):黄金、小盘、半导体、高收益债 ETF、当天的 VIX
+    for sym, name in EXTRA.items():
+        try:
+            cols[name] = yahoo(sym)
+            print(f"{name}: {len(cols[name])} 条, 最新 {cols[name].index.max().date()}")
+        except Exception as e:  # noqa: BLE001
+            print(f"[警告] {name} 失败: {e}", file=sys.stderr)
     df = pd.DataFrame(cols).sort_index()
     df = df[~df.index.duplicated(keep="last")]
     OUT.parent.mkdir(parents=True, exist_ok=True)

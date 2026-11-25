@@ -36,7 +36,7 @@ import requests
 # 配置:权重、序列、阈值都在这里调
 # ---------------------------------------------------------------------------
 
-HISTORY_START = "2018-01-01"   # 抓取起点
+HISTORY_START = "2003-01-01"   # 抓取起点(联储总资产 WALCL 从 2002-12 开始)
 ZSCORE_WINDOW = 756            # 约 3 年工作日,用于滚动标准化
 ZSCORE_MIN_PERIODS = 250       # 至少约 1 年数据才开始出分数
 CHANGE_WINDOW = 20             # "四周变化" = 20 个工作日
@@ -71,6 +71,7 @@ FRED_SERIES = {
     "SOFR": "SOFR(%)",
     "SOFR99": "SOFR 99 分位(%)",
     "IORB": "准备金利率 IORB(%)",
+    "IOER": "超额准备金利率 IOER(%,2021-07 前与 IORB 拼接)",
     "RRPONTSYAWARD": "逆回购利率(%)",
     "RPONTSYD": "常备回购 SRF 等回购操作(十亿美元,日)",
     # 信用
@@ -79,10 +80,12 @@ FRED_SERIES = {
     "BAMLH0A0HYM2": "高收益债 OAS(%)",
     "BAMLC0A0CM": "投资级 OAS(%)",
     "BAMLH0A1HYBB": "BB 级 OAS(%)",
+    "BAA10Y": "穆迪 Baa 公司债 − 10 年美债利差(%,1986 年起,补 ICE 利差只有 3 年的缺口)",
     # 利率
     "DFF": "联邦基金有效利率(%)",
     "PCEPILFE": "核心 PCE 指数(月)",
     "DFII5": "5 年 TIPS 实际收益率(%)",
+    "DFII10": "10 年 TIPS 实际收益率(%,观察黄金用,不计分)",
     "DGS2": "2 年美债收益率(%)",
     "DGS5": "5 年美债收益率(%)",
     "THREEFYTP10": "10 年期限溢价(%)",
@@ -102,7 +105,7 @@ SCORED = [
     ("net_liq_chg",         "A_quantity", +1, "净流动性四周变化"),
     ("tga_chg",             "A_quantity", -1, "TGA 四周变化"),
     ("rrp",                 "A_quantity", +1, "逆回购缓冲余额"),
-    ("fed_bills_chg",       "A_quantity", +1, "联储持有短债四周变化"),
+    ("fed_bills_chg",       "A_quantity", +1, "联储持有短债四周变化(含再投资)"),
 
     ("sofr_iorb",           "B_repo", -1, "SOFR − IORB"),
     ("sofr99_iorb",         "B_repo", -1, "SOFR99 − IORB"),
@@ -114,6 +117,7 @@ SCORED = [
     ("hy_oas",              "C_credit", -1, "高收益债 OAS"),
     ("ig_oas",              "C_credit", -1, "投资级 OAS"),
     ("ccc_bb_gap",          "C_credit", -1, "CCC 与 BB 利差之差"),
+    ("baa_spread",          "C_credit", -1, "Baa 公司债利差(长历史)"),
 
     ("real_policy_rate",    "D_rates", -1, "实际政策利率(EFFR − 核心 PCE 同比)"),
     ("tips5",               "D_rates", -1, "5 年 TIPS 实际收益率"),
@@ -125,6 +129,7 @@ SCORED = [
     ("usdjpy_chg",          "E_stress", +1, "美元兑日元四周变化(急跌 = 套息平仓)"),
     ("nfci",                "E_stress", -1, "NFCI"),
     ("stlfsi",              "E_stress", -1, "金融压力指数"),
+    ("ofr_fsi",             "E_stress", -1, "OFR 金融压力指数"),
 ]
 
 # 硬预警
@@ -177,6 +182,32 @@ def fetch_nyfed_tgcr(start: str) -> pd.Series:
     rows = r.json().get("refRates", [])
     s = pd.Series({pd.Timestamp(x["effectiveDate"]): float(x["percentRate"]) for x in rows})
     return s.sort_index()
+
+
+def fetch_ofr_series(mnemonic: str, start: str) -> pd.Series:
+    """OFR 短期融资监测(回购)单序列,免费、无需 key。"""
+    r = _get("https://data.financialresearch.gov/v1/series/timeseries",
+             {"mnemonic": mnemonic, "start_date": start, "remove_nulls": "true"})
+    rows = r.json()
+    s = pd.Series({pd.Timestamp(d): float(v) for d, v in rows if v is not None})
+    return s.sort_index()
+
+
+def fetch_ofr_repo(kind: str, start: str) -> pd.Series:
+    """优先用终值(-F),最近几天用初值(-P)补上。"""
+    fin = fetch_ofr_series(f"REPO-DVP_{kind}_OO-F", start)
+    try:
+        pre = fetch_ofr_series(f"REPO-DVP_{kind}_OO-P", start)
+        return fin.combine_first(pre)
+    except Exception:  # noqa: BLE001
+        return fin
+
+
+def fetch_ofr_fsi(start: str) -> pd.Series:
+    r = _get("https://www.financialresearch.gov/financial-stress-index/data/fsi.csv")
+    df = pd.read_csv(io.StringIO(r.text))
+    s = pd.Series(pd.to_numeric(df.iloc[:, 1], errors="coerce").values, index=pd.to_datetime(df.iloc[:, 0]))
+    return s[s.index >= start].dropna()
 
 
 FISCAL = "https://api.fiscaldata.treasury.gov/services/api/fiscal_service"
@@ -282,6 +313,9 @@ def load_all(cache_dir: Path, offline: bool) -> pd.DataFrame:
     fetchers = {sid: (lambda sid=sid: fetch_fred(sid, HISTORY_START)) for sid in FRED_SERIES}
     fetchers["TGCR"] = lambda: fetch_nyfed_tgcr(HISTORY_START)
     fetchers["TGA_DAILY"] = lambda: fetch_treasury_tga(HISTORY_START)
+    fetchers["OFR_DVP_RATE"] = lambda: fetch_ofr_repo("AR", "2014-01-01")
+    fetchers["OFR_DVP_VOL"] = lambda: fetch_ofr_repo("TV", "2014-01-01")
+    fetchers["OFR_FSI"] = lambda: fetch_ofr_fsi(HISTORY_START)
 
     for name, fn in fetchers.items():
         path = cache_dir / f"{name}.csv"
@@ -328,11 +362,15 @@ def build_features(raw: pd.DataFrame) -> pd.DataFrame:
     f["fed_bills_chg"] = (col("WSHOBL") / 1e3).diff(CHANGE_WINDOW)
 
     # B 回购(BP / 十亿美元)
-    f["sofr_iorb"] = (col("SOFR") - col("IORB")) * 100
-    f["sofr99_iorb"] = (col("SOFR99") - col("IORB")) * 100
+    iorb = col("IORB").combine_first(col("IOER").where(col("IORB").isna()))  # 2021-07 前用 IOER
+    f["sofr_iorb"] = (col("SOFR") - iorb) * 100
+    f["sofr99_iorb"] = (col("SOFR99") - iorb) * 100
+    f["dvp_iorb"] = (col("OFR_DVP_RATE") - iorb) * 100      # OFR 双边回购(DVP)隔夜利率 − IORB,观察用
+    f["dvp_vol"] = col("OFR_DVP_VOL") / 1e9                  # 十亿美元
     f["tgcr_rrp"] = (col("TGCR") - col("RRPONTSYAWARD")) * 100
     srf = raw["RPONTSYD"].reindex(idx).fillna(0) if "RPONTSYD" in raw else pd.Series(0.0, index=idx)
-    f["srf"] = srf  # 不前向填充:没操作就是 0
+    # 不前向填充:没操作就是 0。2019-09 回购危机之前的回购操作是日常调控,不代表压力,不计
+    f["srf"] = srf.where(idx >= pd.Timestamp("2019-09-01"))
 
     # C 信用(%)
     f["ccc_oas"] = col("BAMLH0A3HYC")
@@ -341,6 +379,7 @@ def build_features(raw: pd.DataFrame) -> pd.DataFrame:
     f["ig_oas"] = col("BAMLC0A0CM")
     f["ccc_bb_gap"] = col("BAMLH0A3HYC") - col("BAMLH0A1HYBB")
     f["ust5"] = col("DGS5")
+    f["baa_spread"] = col("BAA10Y")
     f["ccc_cost_approx"] = f["ust5"] + f["ccc_oas"]  # 视频里的算法:5 年美债 + CCC 利差
 
     # D 利率
@@ -349,6 +388,7 @@ def build_features(raw: pd.DataFrame) -> pd.DataFrame:
     f["core_pce_yoy"] = pce_yoy
     f["real_policy_rate"] = col("DFF") - f["core_pce_yoy"]
     f["tips5"] = col("DFII5")
+    f["tips10"] = col("DFII10")
     f["ust2_chg"] = col("DGS2").diff(CHANGE_WINDOW)
     f["term_premium"] = col("THREEFYTP10")
 
@@ -359,6 +399,7 @@ def build_features(raw: pd.DataFrame) -> pd.DataFrame:
     f["usdjpy_chg"] = f["usdjpy"].pct_change(CHANGE_WINDOW, fill_method=None) * 100
     f["nfci"] = col("NFCI")
     f["stlfsi"] = col("STLFSI4")
+    f["ofr_fsi"] = col("OFR_FSI")
     return f
 
 
@@ -385,8 +426,13 @@ def score(f: pd.DataFrame) -> pd.DataFrame:
     for p in PILLAR_WEIGHTS:
         cols = [f"z_{c}" for c, pl, _, _ in SCORED if pl == p and f"z_{c}" in out]
         # 支柱内至少要有一半序列有值,否则该支柱当天不计
-        need = max(1, (len(cols) + 1) // 2)
-        out[p] = out[cols].mean(axis=1).where(out[cols].notna().sum(axis=1) >= need) if cols else float("nan")
+        # 只按“已经开始有数据”的序列算一半(早年很多序列还不存在,例如 ICE 利差只有约 3 年)
+        if cols:
+            started = out[cols].notna().cummax().sum(axis=1)
+            need = ((started + 1) // 2).clip(lower=1)
+            out[p] = out[cols].mean(axis=1).where(out[cols].notna().sum(axis=1) >= need)
+        else:
+            out[p] = float("nan")
     # 缺失支柱时按剩余权重重新归一;至少 MIN_PILLARS 个支柱有值才出综合指数
     w = pd.Series(PILLAR_WEIGHTS)
     P = out[list(PILLAR_WEIGHTS)]
@@ -435,7 +481,9 @@ def fmt(x, nd=2, suffix=""):
     return "—" if pd.isna(x) else f"{x:,.{nd}f}{suffix}"
 
 
-def write_report(f: pd.DataFrame, sc: pd.DataFrame, alerts: list[str], cal: pd.DataFrame, out: Path) -> Path:
+def write_report(f: pd.DataFrame, sc: pd.DataFrame, alerts: list[str], cal: pd.DataFrame, out: Path,
+                 wd: dict | None = None, asof: dict | None = None, research_note: str | None = None) -> Path:
+    asof = asof or {}
     sc_valid = sc.dropna(subset=["liquidity_index"])
     last_day = sc_valid.index[-1] if not sc_valid.empty else sc.index[-1]
     li = sc.loc[last_day, "liquidity_index"]
@@ -462,33 +510,37 @@ def write_report(f: pd.DataFrame, sc: pd.DataFrame, alerts: list[str], cal: pd.D
         prev = s.iloc[-21] if len(s) > 20 else float("nan")
         L.append(f"| {PILLAR_NAMES[p]} | {int(w*100)}% | {fmt(now)} | {fmt(prev)} |")
     L.append("")
+    if wd:
+        from watch import report_lines
+        L += report_lines(wd, research_note)
     L.append("## 关键读数")
-    L.append("| 指标 | 数值 |")
-    L.append("| --- | --- |")
+    L.append("| 指标 | 数值 | 数据日期 |")
+    L.append("| --- | --- | --- |")
     rows = [
-        ("银行准备金", fmt(lf.reserves / 1e3, 3, " 万亿美元")),
-        ("准备金四周变化", fmt(lf.reserves_chg, 0, " 十亿美元")),
-        ("TGA", fmt(lf.tga, 0, " 十亿美元")),
-        ("TGA 四周变化", fmt(lf.tga_chg, 0, " 十亿美元")),
-        ("隔夜逆回购", fmt(lf.rrp, 1, " 十亿美元")),
-        ("净流动性(总资产 − TGA − 逆回购)", fmt(lf.net_liq / 1e3, 3, " 万亿美元")),
-        ("联储持有短债四周变化(RMP 是否在买)", fmt(lf.fed_bills_chg, 1, " 十亿美元")),
-        ("SOFR − IORB", fmt(lf.sofr_iorb, 1, " BP")),
-        ("SOFR99 − IORB", fmt(lf.sofr99_iorb, 1, " BP")),
-        ("SRF 近 5 日最高", fmt(f['srf'].loc[:last_day].iloc[-5:].max(), 2, " 十亿美元")),
-        ("CCC OAS", fmt(lf.ccc_oas, 2, "%")),
-        ("CCC 借钱成本(5 年美债 + CCC OAS)", fmt(lf.ccc_cost_approx, 2, "%")),
-        ("CCC 有效收益率", fmt(lf.ccc_yield, 2, "%")),
-        ("高收益债 OAS", fmt(lf.hy_oas, 2, "%")),
-        ("投资级 OAS", fmt(lf.ig_oas, 2, "%")),
-        ("核心 PCE 同比", fmt(lf.core_pce_yoy, 2, "%")),
-        ("实际政策利率", fmt(lf.real_policy_rate, 2, "%")),
-        ("5 年 TIPS 实际收益率", fmt(lf.tips5, 2, "%")),
-        ("VIX", fmt(lf.vix, 1)),
-        ("美元兑日元", fmt(lf.usdjpy, 2)),
-        ("NFCI", fmt(lf.nfci, 2)),
+        ("reserves", "银行准备金", fmt(lf.reserves / 1e3, 3, " 万亿美元")),
+        ("reserves_chg", "准备金四周变化", fmt(lf.reserves_chg, 0, " 十亿美元")),
+        ("tga", "TGA", fmt(lf.tga, 0, " 十亿美元")),
+        ("tga_chg", "TGA 四周变化", fmt(lf.tga_chg, 0, " 十亿美元")),
+        ("rrp", "隔夜逆回购", fmt(lf.rrp, 1, " 十亿美元")),
+        ("net_liq", "净流动性(总资产 − TGA − 逆回购)", fmt(lf.net_liq / 1e3, 3, " 万亿美元")),
+        ("fed_bills_chg", "联储持有短债四周变化(含 MBS 再投资,不等于 RMP)", fmt(lf.fed_bills_chg, 1, " 十亿美元")),
+        ("sofr_iorb", "SOFR − IORB", fmt(lf.sofr_iorb, 1, " BP")),
+        ("sofr99_iorb", "SOFR99 − IORB", fmt(lf.sofr99_iorb, 1, " BP")),
+        ("srf", "SRF 近 5 日最高", fmt(f['srf'].loc[:last_day].iloc[-5:].max(), 2, " 十亿美元")),
+        ("ccc_oas", "CCC OAS", fmt(lf.ccc_oas, 2, "%")),
+        ("ccc_cost_approx", "CCC 借钱成本(5 年美债 + CCC OAS)", fmt(lf.ccc_cost_approx, 2, "%")),
+        ("ccc_yield", "CCC 有效收益率", fmt(lf.ccc_yield, 2, "%")),
+        ("hy_oas", "高收益债 OAS", fmt(lf.hy_oas, 2, "%")),
+        ("ig_oas", "投资级 OAS", fmt(lf.ig_oas, 2, "%")),
+        ("core_pce_yoy", "核心 PCE 同比", fmt(lf.core_pce_yoy, 2, "%")),
+        ("real_policy_rate", "实际政策利率", fmt(lf.real_policy_rate, 2, "%")),
+        ("tips5", "5 年 TIPS 实际收益率", fmt(lf.tips5, 2, "%")),
+        ("vix", "VIX", fmt(lf.vix, 1)),
+        ("usdjpy", "美元兑日元", fmt(lf.usdjpy, 2)),
+        ("nfci", "NFCI", fmt(lf.nfci, 2)),
+        ("tips10", "10 年 TIPS 实际收益率", fmt(lf.tips10, 2, "%")),
     ]
-    L += [f"| {a} | {b} |" for a, b in rows]
+    L += [f"| {a} | {b} | {asof.get(k, '—')} |" for k, a, b in rows]
     L.append("")
     L.append("## 各序列贡献(z 分数,正 = 宽松)")
     L.append("| 支柱 | 序列 | z |")
@@ -498,22 +550,20 @@ def write_report(f: pd.DataFrame, sc: pd.DataFrame, alerts: list[str], cal: pd.D
         if zc in sc:
             L.append(f"| {PILLAR_NAMES[p]} | {name} | {fmt(sc[zc].ffill().loc[last_day])} |")
     L.append("")
-    L.append("## 未来 30 天结算与缴税日历")
-    taxes = tax_dates(30)
-    if cal.empty and not taxes:
+    L.append("## 未来 30 天日历(国债结算、FOMC、期权到期、缴税日、月末)")
+    from watch import calendar_rows
+    rows = calendar_rows(cal, wd, 30)
+    if not rows:
         L.append("- 无数据")
     else:
-        L.append("| 日期 | 国债结算(十亿美元,毛额) | 说明 |")
-        L.append("| --- | --- | --- |")
-        cal_map = {r.issue_date.date(): r for r in cal.itertuples()}
-        month_ends = {(pd.Timestamp(d) + pd.offsets.BMonthEnd(0)).date() for d in pd.date_range(date.today(), periods=31)}
-        for d in sorted(set(cal_map) | set(taxes)):
-            r = cal_map.get(d)
-            note = []
-            if d in taxes: note.append("缴税日")
-            if d in month_ends: note.append("月末")
-            if d.month == 12 and d.day >= 29: note.append("年末")
-            L.append(f"| {d} | {(fmt(r.gross_bn, 1) if pd.notna(r.gross_bn) else '待公布') if r else '—'} | {' · '.join(note + ([r.detail] if r else []))} |")
+        L.append("| 日期 | 结算毛额 | 到期 | 净额(抽走现金) | 事件 / 品种 |")
+        L.append("| --- | --- | --- | --- | --- |")
+        for r in rows:
+            g = "待公布" if r["pending"] else fmt(r["gross_bn"], 1)
+            L.append(f"| {r['date']} | {g} | {fmt(r['mature_bn'], 1)} | {fmt(r['net_bn'], 1)} | "
+                     f"{' · '.join(r['events'] + ([r['detail']] if r['detail'] else []))} |")
+        L.append("")
+        L.append("金额单位十亿美元。到期额按财政部拍卖记录加总,是约数;净额 = 结算毛额 − 到期,正数表示从市场抽走现金。")
     L.append("")
     path = out / f"report_{last_day.date()}.md"
     path.write_text("\n".join(L), encoding="utf-8")
@@ -564,8 +614,6 @@ def main(argv=None) -> int:
     f.to_csv(out / "raw_data.csv", float_format="%.4f")
     hist = sc[["liquidity_index", "composite_z", *PILLAR_WEIGHTS]].join(sc.filter(like="z_"))
     hist.dropna(subset=["liquidity_index"]).to_csv(out / "liquidity_history.csv", float_format="%.3f")
-    rp = write_report(f, sc, alerts, cal, out)
-    append_daily_log(sc, f, alerts, out / "daily_log.csv")
     bt = None
     if (out / "market.csv").exists():
         try:
@@ -575,10 +623,27 @@ def main(argv=None) -> int:
             print(f"历史校准信号: 建议仓位 {bt['now']['position']:.0%}(净流动性 13 周变化 {bt['now']['net_liq_chg']:+.0f} 十亿)")
         except Exception as e:  # noqa: BLE001
             print(f"[警告] 回测信号生成失败: {e}", file=sys.stderr)
+    w, asof, rs = None, {}, None
+    try:
+        import watch
+        asof = watch.asof_dates(raw)
+        w = watch.compute(f, raw, out, args.offline)
+    except Exception as e:  # noqa: BLE001
+        print(f"[警告] 观察指标计算失败: {e}", file=sys.stderr)
+    if (out / "market.csv").exists():
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent / "backtest"))
+            from research import run as run_research
+            rs = run_research(f, out)
+        except Exception as e:  # noqa: BLE001
+            print(f"[警告] 新指标验证失败: {e}", file=sys.stderr)
+    rp = write_report(f, sc, alerts, cal, out, w, asof,
+                      "新指标的历史检验见 output/research_summary.md" if rs else None)
+    append_daily_log(sc, f, alerts, out / "daily_log.csv")
     try:
         from dashboard import write_dashboard
         dash = Path(args.dashboard)
-        write_dashboard(f, sc, alerts, cal, dash, out / "daily_log.csv", bt)
+        write_dashboard(f, sc, alerts, cal, dash, out / "daily_log.csv", bt, w, asof, rs)
         print(f"仪表盘: {dash}")
     except Exception as e:  # noqa: BLE001
         print(f"[警告] 仪表盘生成失败: {e}", file=sys.stderr)
