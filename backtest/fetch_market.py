@@ -14,7 +14,8 @@ import pandas as pd
 import requests
 
 START = "2003-01-01"
-EXTRA = {"GLD": "GLD", "IWM": "IWM", "SOXX": "SOXX", "HYG": "HYG", "^VIX": "VIX_Y"}
+EXTRA = {"GLD": "GLD", "IWM": "IWM", "SOXX": "SOXX", "HYG": "HYG", "^VIX": "VIX_Y",
+         "BTC-USD": "BTC", "IBIT": "IBIT", "MSTR": "MSTR"}
 OUT = Path(__file__).resolve().parent.parent / "output" / "market.csv"
 
 
@@ -62,6 +63,8 @@ def main() -> int:
             print(f"[警告] {name} 失败: {e}", file=sys.stderr)
     df = pd.DataFrame(cols).sort_index()
     df = df[~df.index.duplicated(keep="last")]
+    if "SPY" in df:  # 比特币周末也有价格;只保留美股交易日,和其他资产对齐
+        df = df[df["SPY"].notna()]
     OUT.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(OUT, float_format="%.4f")
     print(f"写入 {OUT}")

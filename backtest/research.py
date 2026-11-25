@@ -266,6 +266,73 @@ def study_overlay() -> dict:
             "headers": hd, "rows": rows}
 
 
+BTC_START = "2024-01-11"  # 美国现货比特币 ETF 上市
+
+
+def study_btc() -> dict | None:
+    """比特币与流动性:只认现货 ETF 上市之后;ETF 之前(2018–2023)只作对照,检验“机构化后才受流动性影响”这个假设。"""
+    import backtest as B
+    idx, F, S, cash, rets, spy = B.load()
+    m = pd.read_csv(ROOT / "output" / "market.csv", index_col=0, parse_dates=True)
+    m = m[~m.index.duplicated(keep="last")]
+    if "BTC" not in m or m["BTC"].notna().sum() < 250:
+        return None
+    Rr, X = B.rules(idx, F, S, spy)
+    ks = list(Rr)
+    pos = {"③ 净流动性": Rr[ks[3]], "① 综合指数水平": Rr[ks[1]], "⑤ ①或③任一减仓": Rr[ks[-1]]}
+    btc = m["BTC"].reindex(idx).ffill()
+    q = m["QQQ"].reindex(idx).ffill()
+    g = m["GLD"].reindex(idx).ffill() if "GLD" in m else None
+    eras = [("ETF 前 2018–2023(对照)", "2018-01-01", "2023-12-31"), ("ETF 后 2024-01~至今", BTC_START, "2100-01-01")]
+    # 1) 相关性:每 20 个交易日取一次,不重叠
+    nl20 = F["net_liq"].diff(20)
+    li20 = S["liquidity_index"].diff(20)
+    ret20 = lambda p: p / p.shift(20) - 1  # noqa: E731
+    corr_rows = []
+    for lab, a, b in eras:
+        sl = slice(a, b)
+        d = pd.DataFrame({"btc": ret20(btc), "nl": nl20, "li": li20, "qqq": ret20(q),
+                          "gld": ret20(g) if g is not None else np.nan})[sl].iloc[::20].dropna(subset=["btc"])
+        c = lambda x: f"{d['btc'].corr(d[x]):+.2f}" if d[x].notna().sum() > 5 else "—"  # noqa: E731
+        corr_rows.append([lab, len(d), c("nl"), c("li"), c("qqq"), c("gld")])
+    # 2) 各状态下之后的表现
+    f20, f60 = _fwd(btc, 20), _fwd(btc, 60)
+    state_rows = []
+    li = S["liquidity_index"]
+    states = [("③ 满仓(净流动性扩张)", pos["③ 净流动性"] >= 1), ("③ 半仓(净流动性收缩)", pos["③ 净流动性"] < 1),
+              ("综合指数 <30(紧张)", li < 30), ("综合指数 30–45", (li >= 30) & (li < 45)), ("综合指数 ≥45", li >= 45),
+              ("管道 SOFR−IORB ≥5BP", F["sofr_iorb"] >= 5)]
+    for lab, a, b in eras:
+        for name, mask in states:
+            mk = mask[a:b].fillna(False)
+            x20, x60 = f20[a:b][mk].dropna(), f60[a:b][mk].dropna()
+            state_rows.append([lab, name, int(mk.sum()), _episodes(mk), _pct(x20.mean()) if len(x20) else "—",
+                               _pct(x60.mean()) if len(x60) else "—",
+                               _pct((x60 > 0).mean(), 0, False) if len(x60) else "—"])
+    # 3) 按规则操作(只看 ETF 后)
+    tm_rows = []
+    for asset in ("BTC", "MSTR", "QQQ"):
+        if asset not in m:
+            continue
+        r = m[asset].reindex(idx).ffill().pct_change().fillna(0)
+        for name, p_ in [("一直满仓", pd.Series(1.0, idx))] + list(pos.items()):
+            pf = B.perf(p_, r, cash, BTC_START, "2100-01-01")
+            c = B.const_benchmark(pf["exposure"], r, cash, BTC_START, "2100-01-01")
+            tm_rows.append([asset, name, _pct(pf["cagr"], 1, False), _pct(pf["cagr"] - c) if name != "一直满仓" else "—",
+                            _pct(pf["maxdd"]), _pct(pf["exposure"], 0, False), pf["switches"]])
+    rows60 = pd.DataFrame({"b": btc.pct_change(), "q": q.pct_change()}).rolling(60).corr().unstack()["b"]["q"]
+    return {"title": "6. 比特币与流动性(只认现货 ETF 上市后的数据)",
+            "note": f"现货比特币 ETF {BTC_START} 上市。ETF 前 2018–2023 只用来对照,检验“机构化以后比特币才跟着美元流动性走”这个假设。"
+                    "ETF 后只有不到 3 年、约 35 个不重叠的月度样本,任何结论都只能当参考。MSTR 是靠发债囤币的公司,波动约为比特币的 2 倍。",
+            "headers": ["时期", "月度样本", "与净流动性 4 周变化", "与综合指数 4 周变化", "与纳指 100", "与黄金"],
+            "rows": corr_rows,
+            "summary": {"headers": ["时期", "状态", "天数", "段数", "BTC 后 20 日", "BTC 后 60 日", "60 日上涨概率"], "rows": state_rows},
+            "detail": {"headers": ["资产", "规则(ETF 后)", "年化", "择时增益", "最大回撤", "平均仓位", "调仓"], "rows": tm_rows},
+            "detail_title": "按规则操作(只算 ETF 上市后)",
+            "btc_qqq_corr60": {"dates": [d.strftime("%Y-%m-%d") for d in rows60.index[rows60.index >= "2020-01-01"]],
+                               "v": [None if pd.isna(v) else round(float(v), 3) for v in rows60[rows60.index >= "2020-01-01"]]}}
+
+
 def _md_table(h, rows):
     L = ["| " + " | ".join(map(str, h)) + " |", "|" + "---|" * len(h)]
     L += ["| " + " | ".join(map(str, r)) + " |" for r in rows]
@@ -284,6 +351,12 @@ def run(f: pd.DataFrame | None = None, out: Path = ROOT / "output") -> dict:
         sections.append(dict(study_overlay(), verdict=VERDICTS["overlay"]))
     except Exception as e:  # noqa: BLE001
         print(f"[警告] 叠加回测失败: {e}", file=sys.stderr)
+    try:
+        b = study_btc()
+        if b:
+            sections.append(dict(b, verdict=VERDICTS.get("btc", "")))
+    except Exception as e:  # noqa: BLE001
+        print(f"[警告] 比特币检验失败: {e}", file=sys.stderr)
     L = ["# 新指标历史检验(视频对比讨论的第二批)", "",
          f"数据 {START} ~ {px['SPY'].index[-1].date()}。只做研究,不进仓位规则。样本小的结论只能当参考。", ""]
     for s in sections:
@@ -291,7 +364,7 @@ def run(f: pd.DataFrame | None = None, out: Path = ROOT / "output") -> dict:
         if s.get("summary"):
             L += ["汇总:", ""] + _md_table(s["summary"]["headers"], s["summary"]["rows"]) + [""]
         if s.get("detail"):
-            L += ["最近 15 次大涨:", ""] + _md_table(s["detail"]["headers"], s["detail"]["rows"]) + [""]
+            L += [s.get("detail_title", "最近 15 次大涨:"), ""] + _md_table(s["detail"]["headers"], s["detail"]["rows"]) + [""]
         if s.get("diverge"):
             d = s["diverge"]
             L += [f"黄金在 10 年 TIPS 实际利率 5 日下降时 5 日跌超 2%:共 {d['days']} 天({d['episodes']} 段),"
