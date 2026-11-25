@@ -21,6 +21,14 @@ WEIGHTS = {"BTC": 0.40, "VTI": 0.25, "VXUS": 0.10, "IEF": 0.15}  # 余下 10% �
 LOOSE = {"BTC": 0.70, "VTI": 0.18, "VXUS": 0.07, "IEF": 0.05}  # 现金 0
 LOOSE_LONG = {"VTI": 0.70, "VXUS": 0.25, "IEF": 0.05}          # 不含比特币时
 LOOSE_IN, LOOSE_OUT, LOOSE_N = 70, 60, 20
+# D 方案(2026-11-25 加):美联储宣布 QE / 扩表的次日加码,持有 250 个交易日(约一年);减半信号优先。
+# 名单要人工维护:以后联储宣布新的大规模购债,在这里加一行。
+QE_EVENTS = [("2008-11-25", "QE1:宣布购买 MBS 和机构债"), ("2009-03-18", "QE1 扩大并开始买国债"),
+             ("2010-11-03", "QE2:6000 亿美元国债"), ("2012-09-13", "QE3:每月 400 亿 MBS,不设上限"),
+             ("2019-10-11", "宣布每月 600 亿美元购买短债"), ("2020-03-23", "无限量 QE"),
+             ("2025-12-10", "宣布开始补充准备金购买短债(RMP)")]
+QE_HOLD = 250
+GUIDE_MODE = "D"  # 首页指引用哪种加码:"A" 指数 >70 连续 20 天;"D" 宣布 QE 次日
 RISKY = ("BTC", "VTI", "VXUS")
 COST = 0.0005
 BTC_START = "2024-01-11"
@@ -72,6 +80,15 @@ def qe_flag(fa: pd.Series) -> pd.Series:
     f[hi] = 1.0
     f[lo] = 0.0
     return f.ffill().fillna(0.0)
+
+
+def qe_event_flag(idx) -> pd.Series:
+    f = np.zeros(len(idx))
+    for d, _ in QE_EVENTS:
+        j = idx.searchsorted(pd.Timestamp(d)) + 1
+        if j < len(idx):
+            f[j:j + QE_HOLD] = 1.0
+    return pd.Series(f, index=idx)
 
 
 def tier(sig: pd.Series, loose: pd.Series) -> pd.Series:
@@ -146,7 +163,9 @@ def run(idx, cash, R_rules: dict, sm: pd.Series | None = None, fed_assets: pd.Se
     lf = loose_flag(sm) if sm is not None else pd.Series(0.0, idx)
     T3 = tier(sigs["① 综合指数(主方案)"], lf)
     T3b = tier(sigs["① 综合指数(主方案)"], qe_flag(fed_assets)) if fed_assets is not None else T3
-    sigs = {"一直持有(不择时)": sigs["一直持有(不择时)"], MAIN: T3, "①+扩表加码(三档 B)": T3b, "① 两档(减半/正常)": sigs["① 综合指数(主方案)"],
+    T3d = tier(sigs["① 综合指数(主方案)"], qe_event_flag(idx))
+    MD = "①+宣布QE加码(三档 D)"
+    sigs = {"一直持有(不择时)": sigs["一直持有(不择时)"], MD: T3d, MAIN: T3, "①+扩表加码(三档 B)": T3b, "① 两档(减半/正常)": sigs["① 综合指数(主方案)"],
             "③ 净流动性(对照)": sigs["③ 净流动性(对照)"], "⑤ ①或③(对照)": sigs["⑤ ①或③(对照)"]}
     W = lambda t, wts, lo: _tw(t, wts, lo)  # noqa: E731
 
@@ -167,7 +186,7 @@ def run(idx, cash, R_rules: dict, sm: pd.Series | None = None, fed_assets: pd.Se
         st = _stats(d, cash[on])
         single.append([NAMES[k], st["total"], st["cagr"], st["maxdd"], st["sharpe"]])
     res["btc_era"] = {"start": BTC_START, "dates": [d.strftime("%Y-%m-%d") for d in idx[on]], "equity": eqs,
-                      "rows": rows, "single": single, "boot": _boot({k: daily[k] for k in list(daily)[:4]})}
+                      "rows": rows, "single": single, "boot": _boot({k: daily[k] for k in list(daily)[:5]})}
 
     # B) 2004 起,不含比特币(把 BTC 的比例按比例分给其他),检验股债部分是否稳健
     w2 = {k: v for k, v in WEIGHTS.items() if k != "BTC"}
@@ -186,11 +205,11 @@ def run(idx, cash, R_rules: dict, sm: pd.Series | None = None, fed_assets: pd.Se
         lrows.append(row)
     res["long"] = {"weights": {NAMES[k]: v for k, v in w2.items()} | {NAMES["CASH"]: round(1 - sum(w2.values()), 4)},
                    "periods": [p[0] for p in periods], "rows": lrows,
-                   "boot": _boot({k: dl[k][LONG_START:] for k in list(dl)[:4]})}
+                   "boot": _boot({k: dl[k][LONG_START:] for k in list(dl)[:5]})}
     res["long"]["loose_weights"] = {NAMES[k]: v for k, v in LOOSE_LONG.items()}
     # 宽松档在历史上出现的时段(按年统计天数占比),以及每段宽松期的股票表现
     res["loose_years_b"] = {str(y): round(float(v), 2) for y, v in (T3b >= 2).groupby(idx.year).mean().items() if v > 0}
-    on_l = (T3 >= 2)
+    on_l = ((T3d if GUIDE_MODE == "D" else T3) >= 2)
     res["loose_years"] = {str(y): round(float(v), 2) for y, v in on_l.groupby(on_l.index.year).mean().items() if v > 0}
     segs, st0 = [], None
     for i, (d, v) in enumerate(on_l.items()):
@@ -207,7 +226,7 @@ def run(idx, cash, R_rules: dict, sm: pd.Series | None = None, fed_assets: pd.Se
     ref = idx >= pd.Timestamp("2020-01-01")
     Rb = pd.DataFrame({k: r[k] for k in WEIGHTS}).fillna(0)
     rr = []
-    for n in ("一直持有(不择时)", MAIN, "①+扩表加码(三档 B)", "① 两档(减半/正常)"):
+    for n in ("一直持有(不择时)", MD, MAIN, "①+扩表加码(三档 B)", "① 两档(减半/正常)"):
         d = _daily(W(sigs[n], WEIGHTS, LOOSE), Rb, cash)[ref]
         d = d[: "2023-12-31"]
         st = _stats(d, cash[d.index])
@@ -217,16 +236,18 @@ def run(idx, cash, R_rules: dict, sm: pd.Series | None = None, fed_assets: pd.Se
     # 首页操作指引图:每天的目标比例、信号、综合指数 20 日均值、到当天为止的资金
     # 从 2004 年起给出每天规则会建议的比例(比特币那份在 2024 年前只是“规则会怎么说”,不计入收益);资金只从 2024-01-11 算
     gon = idx >= pd.Timestamp(LONG_START)
-    sg = sigs[MAIN][gon]
-    wd = W(sigs[MAIN], WEIGHTS, LOOSE)[gon]
+    GK = MD if GUIDE_MODE == "D" else MAIN
+    sg = sigs[GK][gon]
+    wd = W(sigs[GK], WEIGHTS, LOOSE)[gon]
     npre = int((idx[gon] < pd.Timestamp(BTC_START)).sum())
     res["guide"] = {"dates": [d.strftime("%Y-%m-%d") for d in idx[gon]], "sig": [float(v) for v in sg], "btc_start": BTC_START,
                     "sm": [None if sm is None or pd.isna(v) else round(float(v), 1) for v in (sm[gon] if sm is not None else sg * np.nan)],
                     "alloc": {NAMES[k]: [round(float(v), 3) for v in wd[k]] for k in wd.columns},
-                    "eq_timed": [None] * npre + eqs[MAIN], "eq_hold": [None] * npre + eqs["一直持有(不择时)"]}
+                    "mode": GUIDE_MODE, "name": GK, "qe_events": QE_EVENTS, "qe_hold": QE_HOLD,
+                    "eq_timed": [None] * npre + eqs[GK], "eq_hold": [None] * npre + eqs["一直持有(不择时)"]}
     # 今天的建议比例(主方案)
-    wt = W(sigs[MAIN], WEIGHTS, LOOSE).iloc[-1]
-    res["today"] = {"signal": float(sigs[MAIN].iloc[-1]), "date": idx[-1].strftime("%Y-%m-%d"),
+    wt = W(sigs[GK], WEIGHTS, LOOSE).iloc[-1]
+    res["today"] = {"signal": float(sigs[GK].iloc[-1]), "name": GK, "date": idx[-1].strftime("%Y-%m-%d"),
                     "alloc": {NAMES[k]: round(float(v), 4) for k, v in wt.items()},
                     "nl_signal": float(sigs["③ 净流动性(对照)"].iloc[-1])}
     return res
@@ -239,6 +260,7 @@ def md(p: dict) -> list[str]:
          + "。信号用规则 ①,减半时比特币和股票各打五折,腾出的钱放现金,美债不动。", "",
          "宽松加码档(三档 A):综合指数 20 日均值 >70 连续 20 天 → 改为" + "、".join(f"{k} {v:.0%}" for k, v in p["loose_weights"].items())
          + ";跌回 60 以下连续 20 天 → 恢复正常;减半信号优先。三档 B:联储总资产 13 周增长 >5% 连续 10 天 → 加码,13 周变化转负连续 20 天 → 退出。"
+         "三档 D:美联储宣布 QE/扩表的次日加码,持有约一年(250 个交易日)。"
          "两个加码条件都是在看结果之前定的。", "",
          f"### 2024-01-11 起(含比特币)", "", "| 方案 | 总收益 | 年化 | 最大回撤 | 波动 | 夏普 | 调仓 |", "|---|---|---|---|---|---|---|"]
     for r in p["btc_era"]["rows"]:
@@ -268,7 +290,7 @@ def md(p: dict) -> list[str]:
     t = p["today"]
     L += ["", f"今天({t['date']})主方案信号 { {0.5: '减半', 1.0: '正常', 2.0: '宽松加码'}.get(t['signal'], t['signal'])},对应比例:"
           + "、".join(f"{k} {v:.0%}" for k, v in t["alloc"].items()) + "。", ""]
-    L += ["### 宽松加码档(A)在历史上出现的时段", "", "| 开始 | 结束 | 天数 | 期间美股 VTI | 期间 VTI 最大回撤 |", "|---|---|---|---|---|"]
+    L += [f"### 首页所用加码档({p['guide']['mode']})在历史上出现的时段", "", "| 开始 | 结束 | 天数 | 期间美股 VTI | 期间 VTI 最大回撤 |", "|---|---|---|---|---|"]
     for a, b, n, v, d in p.get("loose_segments", []):
         L.append(f"| {a} | {b} | {n} | {f(v)} | {f(d)} |")
     L += ["", "### 参考:2020–2023 用 ETF 前的比特币跑同一套(那时比特币还不受美元流动性驱动,只作参考)", "",

@@ -186,7 +186,7 @@ details{margin-top:10px} summary{cursor:pointer;color:var(--accent)}
     <div class="sub" id="gdWhy" style="margin-top:6px"></div>
     <div class="row" style="margin-top:8px"><button data-gr="etf" class="on">2024 ETF 上市后</button><button data-gr="all">2004 年至今(看历史上的宽松加码)</button></div>
     <div id="cGuide" class="chart" style="height:380px;margin-top:6px"></div>
-    <div class="note">把鼠标移到图上任意一天(手机上点一下),上面就显示那一天的操作建议;移开或在最右端就是今天的建议。上图:流动性综合指数 20 日均值,红区 = 低于 35,绿区 = 高于 50,深绿 = 高于 70。下图:每天各资产的建议比例。三档规则:① 20 日均值低于 35 连续 20 天 → 减半(比特币 20%,股票减半,其余放现金),高于 50 连续 20 天 → 恢复正常(比特币 40%);② 高于 70 连续 20 天 → 宽松加码(比特币 70%、股票 25%、美债 5%),跌回 60 以下连续 20 天 → 退回正常。2024 年 ETF 上市后指数从没连续 20 天高于 70,所以这段还没出现过加码;点“2004 年至今”可以看 2013–2014、2021 年等宽松期规则会怎么建议(紫色底色 = 加码,红色底色 = 减半)。2024 年前的比特币比例只是规则输出,不算收益。比例是假设的,只是规则输出,不是投资建议。</div>
+    <div class="note">把鼠标移到图上任意一天(手机上点一下),上面就显示那一天的操作建议;移开或在最右端就是今天的建议。上图:流动性综合指数 20 日均值,红区 = 低于 35,绿区 = 高于 50,深绿 = 高于 70。下图:每天各资产的建议比例。三档规则:① 20 日均值低于 35 连续 20 天 → 减半(比特币 20%,股票减半,其余放现金),高于 50 连续 20 天 → 恢复正常(比特币 40%);② 美联储宣布 QE/大规模购债的第二天 → 宽松加码(比特币 70%、股票 25%、美债 5%),持有约一年。减半信号优先:2025-12 联储宣布购买短债时,指数已处在减半状态,所以没有加码;点“2004 年至今”可以看 2009、2010–11、2012–13、2020 年等 QE 期规则会怎么建议(紫色底色 = 加码,红色底色 = 减半)。2024 年前的比特币比例只是规则输出,不算收益。比例是假设的,只是规则输出,不是投资建议。</div>
   </div>
 
   <div class="card">
@@ -646,7 +646,13 @@ else {
     const smt = sm == null ? "—" : sm.toFixed(1);
     let run = 0; for (let j = i; j >= 0 && G.sm[j] != null && (loose ? G.sm[j] < 60 : full ? G.sm[j] < 35 : G.sm[j] > 50); j--) run++;
     let up = 0; if (full && !loose) for (let j = i; j >= 0 && G.sm[j] != null && G.sm[j] > 70; j--) up++;
-    document.getElementById("gdWhy").textContent = loose
+    const D_ = G.mode === "D";
+    let ev = null; if (D_) for (const [d, nm] of G.qe_events){ const k = G.dates.findIndex(x => x > d); if (k >= 0 && k <= i && i - k < G.qe_hold) ev = [d, nm, G.qe_hold - (i - k)]; }
+    document.getElementById("gdWhy").textContent = D_ && loose && ev
+      ? `美联储 ${ev[0]} ${ev[1]} → 第二天起宽松加码,持有约一年(还剩 ${ev[2]} 个交易日)。期间综合指数 20 日均值若连续 20 天低于 35,直接减半。`
+      : D_ && !loose && full ? `流动性综合指数 20 日均值 ${smt}。美联储一旦宣布 QE/大规模购债,第二天就加码;连续 20 天低于 35 则减半。`
+      : D_ && !full ? `流动性综合指数 20 日均值 ${smt},之前连续 20 天低于 35 → 减半(减半优先于加码)。` + (run > 0 ? `已连续 ${run} 天高于 50,再 ${Math.max(20 - run, 0)} 天恢复。` : `要连续 20 天高于 50 才恢复。`) + (ev ? `美联储 ${ev[0]} 已宣布${ev[1]},恢复后直接进入加码。` : "")
+      : loose
       ? `流动性综合指数 20 日均值 ${smt},之前连续 20 天高于 70 → 宽松加码。` + (run > 0 ? `已连续 ${run} 天低于 60,再 ${Math.max(20 - run, 0)} 天就退回正常;` : `跌回 60 以下连续 20 天才退回正常;`) + `连续 20 天低于 35 则直接减半。`
       : full && up > 0 ? `流动性综合指数 20 日均值 ${smt},已连续 ${up} 天高于 70,再 ${Math.max(20 - up, 0)} 天就进入宽松加码。`
       : full
@@ -694,7 +700,7 @@ else {
   const L = P.long;
   document.getElementById("pfLongW").textContent = `把比特币那份按比例分给其他资产:${wtxt(L.weights)}。`;
   tbl("pfLong", ["方案", ...L.periods.flatMap(x => [`${x} 年化`, "回撤", "夏普"])], L.rows.map(r => [r[0], ...L.periods.flatMap((_, i) => [pc(r[1+3*i], false), pc(r[2+3*i]), r[3+3*i] == null ? "—" : r[3+3*i].toFixed(2)])]));
-  if (P.loose_segments) tbl("pfLoose", ["宽松加码 A 开始", "结束", "天数", "期间美股 VTI", "期间 VTI 最大回撤"], P.loose_segments.map(r => [r[0], r[1], r[2], pc(r[3]), pc(r[4])]));
+  if (P.loose_segments) tbl("pfLoose", [`宽松加码 ${(P.guide && P.guide.mode) || "A"} 开始`, "结束", "天数", "期间美股 VTI", "期间 VTI 最大回撤"], P.loose_segments.map(r => [r[0], r[1], r[2], pc(r[3]), pc(r[4])]));
   if (P.ref_2020) tbl("pfRef", ["参考:2020–2023(ETF 前比特币)", "总收益", "年化", "最大回撤", "夏普"], P.ref_2020.map(r => [r[0], pc(r[1]), pc(r[2], false), pc(r[3]), r[4] == null ? "—" : r[4].toFixed(2)]));
   const br = [];
   [["2024 起(含 BTC)", E.boot], ["2004 起(股债)", L.boot]].forEach(([lab, b]) => {
