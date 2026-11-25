@@ -207,6 +207,20 @@ def study_events(px) -> dict:
                         "rows": summ}}
 
 
+# 截至 2026-11-25 的检验结论(人工撰写;数字每天会小幅变化,结论变了需要更新这里)
+VERDICTS = {
+    "pipe": "只有 ≥10BP(瘫痪)这一档之后,纳指 60 天平均 −1.0%,上涨概率 38%(所有日子 67%),共 11 段;3–5BP、5–10BP 两档和平时差别不大。"
+            "所以 5BP 不是有效分界线,原来 10BP 的硬预警线保留,3–10BP 只作提示。样本集中在 2025 年四季度,仍偏少。",
+    "rebound": "46 次大涨里有 45 次三条都满足,所以这三条分不出反抽和反转:满足时之后 60 天跌破前低的比例 53%,和全部大涨日的 52% 一样。"
+               "这三条只能确认“没有继续恶化”,不能当作反转信号。注意历史检验用 HYG 代替 CCC,真实的 CCC 利差更敏感(11/20 CCC 创新高,HYG 没有)。",
+    "cross": "同跌密集期之后,纳指 60 天平均 +9.8%、上涨概率 84%,好于平时的 +5.1%、73%:历史上的无差别砍仓多数接近短期低点,而不是更大下跌的开始。"
+             "黄金在同跌之后 60 天 +2.1%,反而低于平时的 +3.9%,所以“砍仓后黄金必然修复”不成立。黄金逆着实际利率下跌之后,20 天 +2.3%(平时 +1.2%),只有短期略好。"
+             "样本期 2019–2026 恰好是黄金大牛市,结论偏乐观。",
+    "events": "黄金 5 天内上涨 8/11 次、60 天 9/11 次,和视频说的“10 次中 8 次、9 次”基本一致;高收益债 60 天 11/11 全涨;半导体 60 天平均 +16.7% 涨幅最大,但只有 9/11 次上涨,且前 5 天平均是跌的。"
+              "“黄金先涨、半导体最后涨最多”大体成立。但其中两次是 2020-03 的极端放水;2025 年的两次(停缩表、RMP)60 天后纳指反而小跌,黄金大涨。",
+}
+
+
 def _md_table(h, rows):
     L = ["| " + " | ".join(map(str, h)) + " |", "|" + "---|" * len(h)]
     L += ["| " + " | ".join(map(str, r)) + " |" for r in rows]
@@ -215,16 +229,16 @@ def _md_table(h, rows):
 
 def run(f: pd.DataFrame | None = None, out: Path = ROOT / "output") -> dict:
     F, px = load(f)
-    sections = [study_pipe(F, px)]
+    sections = [dict(study_pipe(F, px), verdict=VERDICTS["pipe"])]
     if "HYG" in px:
-        sections.append(study_rebound(F, px))
+        sections.append(dict(study_rebound(F, px), verdict=VERDICTS["rebound"]))
     if "GLD" in px:
-        sections.append(study_cross(F, px))
-    sections.append(study_events(px))
+        sections.append(dict(study_cross(F, px), verdict=VERDICTS["cross"]))
+    sections.append(dict(study_events(px), verdict=VERDICTS["events"]))
     L = ["# 新指标历史检验(视频对比讨论的第二批)", "",
          f"数据 {START} ~ {px['SPY'].index[-1].date()}。只做研究,不进仓位规则。样本小的结论只能当参考。", ""]
     for s in sections:
-        L += [f"## {s['title']}", "", s["note"], ""] + _md_table(s["headers"], s["rows"]) + [""]
+        L += [f"## {s['title']}", "", f"**结论:**{s['verdict']}", "", s["note"], ""] + _md_table(s["headers"], s["rows"]) + [""]
         if s.get("summary"):
             L += ["汇总:", ""] + _md_table(s["summary"]["headers"], s["summary"]["rows"]) + [""]
         if s.get("detail"):

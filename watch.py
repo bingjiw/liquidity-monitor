@@ -201,6 +201,9 @@ def fetch_maturities(days: int = 30) -> pd.Series:
 # FINRA 券商融资余额(月度,约滞后 3 周)
 # ---------------------------------------------------------------------------
 FINRA_PAGE = "https://www.finra.org/finra-data/browse-catalog/industry-snapshot/margin-statistics"
+# 页面链接常由脚本生成,抓不到时按历史上用过的固定地址依次尝试
+FINRA_XLSX = ["https://www.finra.org/sites/default/files/2021-03/margin-statistics.xlsx",
+              "https://www.finra.org/sites/default/files/margin-statistics.xlsx"]
 
 
 def fetch_margin(cache: Path) -> pd.Series:
@@ -208,11 +211,22 @@ def fetch_margin(cache: Path) -> pd.Series:
     try:
         h = {"User-Agent": "Mozilla/5.0"}
         page = requests.get(FINRA_PAGE, headers=h, timeout=30).text
-        links = re.findall(r'href="([^"]+margin[^"]*\.xlsx)"', page, flags=re.I)
-        if not links:
-            raise RuntimeError("页面上找不到 xlsx 链接")
-        url = links[0] if links[0].startswith("http") else "https://www.finra.org" + links[0]
-        x = pd.read_excel(io.BytesIO(requests.get(url, headers=h, timeout=60).content), sheet_name=0)
+        links = re.findall(r'["\'(]([^"\'()]*margin[^"\'()]*\.xlsx)', page, flags=re.I)
+        cands = [u if u.startswith("http") else "https://www.finra.org" + u for u in links] + FINRA_XLSX
+        x, errs = None, []
+        for url in dict.fromkeys(cands):
+            try:
+                rr = requests.get(url, headers=h, timeout=60)
+                rr.raise_for_status()
+                for hdr in range(5):  # 表头前可能有标题行
+                    x = pd.read_excel(io.BytesIO(rr.content), sheet_name=0, header=hdr)
+                    if any("debit" in str(c).lower() for c in x.columns):
+                        break
+                break
+            except Exception as e:  # noqa: BLE001
+                errs.append(f"{url}: {e}")
+        if x is None:
+            raise RuntimeError("; ".join(errs)[:500])
         dcol = next(c for c in x.columns if "month" in str(c).lower() or "date" in str(c).lower())
         vcol = next(c for c in x.columns if "debit" in str(c).lower() and "margin" in str(c).lower())
         s = pd.Series(pd.to_numeric(x[vcol], errors="coerce").values,
@@ -277,7 +291,7 @@ def compute(f: pd.DataFrame, raw: pd.DataFrame, out: Path, offline: bool = False
     return {
         "pipe": {"bp": None if pd.isna(bp) else bp, "date": d_pipe.strftime("%Y-%m-%d") if d_pipe is not None else None,
                  "tier": tier, "color": color, "streak": streak_above(sofr_bp),
-                 "sofr99": None if pd.isna(f["sofr99_iorb"].dropna().iloc[-1]) else float(f["sofr99_iorb"].dropna().iloc[-1]),
+                 "sofr99": None if pd.isna(f["sofr99_iorb"].dropna().iloc[-1]) else round(float(f["sofr99_iorb"].dropna().iloc[-1]), 0),
                  "srf5": round(srf5, 2),
                  "hist": {"dates": [d.strftime("%Y-%m-%d") for d in hist.index], "bp": [float(v) for v in hist]}},
         "rebound": {"conds": conds, "passed": passed, "total": len(conds)},
