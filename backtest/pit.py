@@ -19,6 +19,7 @@ PUB_LAG = {
     "real_policy_rate": 45,   # 核心 PCE 按月初记日期,实际约两个月后才公布
     "tips5": 1, "ust2_chg": 1, "term_premium": 5,
     "vix": 0, "usd_chg": 5, "usdjpy_chg": 5, "nfci": 5, "stlfsi": 6,
+    "baa_spread": 1, "ofr_fsi": 2, "dvp_iorb": 1, "dvp_vol": 1,
 }
 
 

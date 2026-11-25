@@ -20,13 +20,19 @@ import pandas as pd
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 
-START = "2019-01-01"
+START = "2004-01-02"
 UP_DAY = 0.03          # 纳指单日大涨阈值
 DD = -0.01             # 同日双跌:各跌超 1%
 CORR_HI = 0.5
 
 # 美联储流动性相关的政策动作(公告日)。周末公告以下一个交易日为第一天,基准用公告前最后一个收盘。
 EVENTS = [
+    ("2008-03-16", "贝尔斯登救助,推出一级交易商融资工具 PDCF"),
+    ("2008-10-08", "全球央行联合降息"),
+    ("2008-11-25", "宣布购买 MBS 和机构债(QE1)"),
+    ("2009-03-18", "QE1 扩大并开始买国债"),
+    ("2010-11-03", "QE2:6000 亿美元国债"),
+    ("2012-09-13", "QE3:每月 400 亿 MBS,不设上限"),
     ("2019-01-30", "FOMC 转向“耐心”,表示缩表可灵活调整"),
     ("2019-03-20", "FOMC 宣布 9 月停止缩表"),
     ("2019-07-31", "首次降息并提前结束缩表"),
@@ -108,7 +114,7 @@ def study_pipe(F, px) -> dict:
     t = group_table(lab, px, ["≤0 宽松", "0–3 正常", "3–5 偏紧", "5–10 紧张", "≥10 瘫痪"])
     start = bp.dropna().index.min()
     return {"title": "1. 回购管道分档:SOFR − IORB 各档之后的美股表现",
-            "note": f"数据从 {start.date() if start is not None else '—'} 起(IORB 2021-07 才有)。用前一天公布的利差。"
+            "note": f"数据从 {start.date() if start is not None else '—'} 起(SOFR 2018-04 才有;2021-07 前用 IOER 代替 IORB)。用前一天公布的利差。"
                     "“独立段数”= 连续处于该档算一段,段数少说明样本其实很小。", **t}
 
 
@@ -143,7 +149,7 @@ def study_rebound(F, px) -> dict:
                _pct(_fwd(q, 60)[d]), "—" if pd.isna(_fwd(q, 60)[d]) else ("✗ 失败" if fail[d] else "✓ 守住")]
               for d in days[-15:]]
     return {"title": f"2. 反抽体检:QQQ 单日涨超 {UP_DAY:.0%} 之后",
-            "note": "三条:SOFR − IORB < 3BP(2021-07 前无数据,按满足计)、VIX 不高于前 20 日最高、HYG 不低于前 20 日最低(代替 CCC 利差,"
+            "note": "三条:SOFR − IORB < 3BP(2018-04 前无数据,按满足计)、VIX 不高于前 20 日最高、HYG 不低于前 20 日最低(代替 CCC 利差,"
                     "因为 CCC 在 FRED 只有约 3 年)。“反抽失败”= 之后 60 天内跌破大涨前 20 日的最低收盘。",
             "headers": headers, "rows": rows,
             "detail": {"headers": ["日期", "QQQ 当日", "满足", "管道 BP", "VIX", "信用", "后 60 日", "结果"], "rows": detail}}
@@ -201,7 +207,7 @@ def study_events(px) -> dict:
         summ.append([n, len(r5), _pct(r5.mean()), f"{int((r5 > 0).sum())}/{len(r5)}",
                      len(r60), _pct(r60.mean()), f"{int((r60 > 0).sum())}/{len(r60)}", _pct(r60.median())])
     return {"title": "4. 美联储流动性干预之后,谁先涨、谁涨最多",
-            "note": "基准 = 公告前最后一个收盘。事件只有 11 次,其中 2020-03 两次是史上最大放水,会拉高平均数,看中位数和上涨次数更稳。",
+            "note": f"基准 = 公告前最后一个收盘。共 {len(EVENTS)} 次(2008–2012 的 QE 是新补的,视频只统计了 2019–2023)。2020-03 两次是史上最大放水,会拉高平均数,看中位数和上涨次数更稳。高收益债 ETF 2007-04、半导体 ETF 2001 年起有数据。",
             "headers": headers, "rows": rows,
             "summary": {"headers": ["资产", "样本", "5 日平均", "5 日上涨次数", "样本", "60 日平均", "60 日上涨次数", "60 日中位数"],
                         "rows": summ}}
@@ -249,14 +255,14 @@ def study_overlay() -> dict:
     for name, pos in rules:
         pos = pos.clip(0, 1)
         row = [name]
-        for a, b in (("2019-03-15", "2022-12-31"), ("2023-01-01", "2100-01-01")):
+        for a, b in (("2004-01-02", "2019-03-14"), ("2019-03-15", "2022-12-31"), ("2023-01-01", "2100-01-01")):
             p = B.perf(pos, rets["SPY"], cash, a, b)
             c = B.const_benchmark(p["exposure"], rets["SPY"], cash, a, b)
-            row += [_pct(p["cagr"], 1, False), _pct(p["cagr"] - c), _pct(p["maxdd"]), f"{p['sharpe']:.2f}", p["switches"]]
+            row += [_pct(p["cagr"], 1, False), _pct(p["cagr"] - c), _pct(p["maxdd"])]
         rows.append(row)
-    hd = ["规则"] + [f"{t}{x}" for t in ("样本内 ", "样本外 ") for x in ("年化", "择时增益", "最大回撤", "夏普", "调仓")]
+    hd = ["规则"] + [f"{t}{x}" for t in ("2004–18 ", "样本内 ", "样本外 ") for x in ("年化", "择时增益", "最大回撤")]
     return {"title": "5. 把新预警叠加到仓位规则,能否更好(SPY)",
-            "note": "每个预警事先定为“扣 25% 仓位”,不调参数。择时增益 = 年化 − 同等平均仓位的年化。管道数据 2021-07 才有,所以样本内只覆盖 1.5 年。",
+            "note": "每个预警事先定为“扣 25% 仓位”,不调参数。择时增益 = 年化 − 同等平均仓位的年化。管道数据(SOFR)2018-04 才有,HYG 2007 年才有,之前这两个预警不起作用。",
             "headers": hd, "rows": rows}
 
 

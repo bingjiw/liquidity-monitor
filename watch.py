@@ -45,6 +45,7 @@ ASOF_SRC = {
     "core_pce_yoy": "PCEPILFE", "real_policy_rate": "PCEPILFE", "tips5": "DFII5", "tips10": "DFII10",
     "ust2_chg": "DGS2", "term_premium": "THREEFYTP10", "vix": "VIXCLS", "usd_chg": "DTWEXBGS",
     "usdjpy": "DEXJPUS", "usdjpy_chg": "DEXJPUS", "nfci": "NFCI", "stlfsi": "STLFSI4",
+    "baa_spread": "BAA10Y", "ofr_fsi": "OFR_FSI", "dvp_iorb": "OFR_DVP_RATE", "dvp_vol": "OFR_DVP_VOL",
 }
 
 

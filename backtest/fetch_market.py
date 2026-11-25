@@ -13,7 +13,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-START = "2018-01-01"
+START = "2003-01-01"
 EXTRA = {"GLD": "GLD", "IWM": "IWM", "SOXX": "SOXX", "HYG": "HYG", "^VIX": "VIX_Y"}
 OUT = Path(__file__).resolve().parent.parent / "output" / "market.csv"
 
