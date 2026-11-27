@@ -637,8 +637,20 @@ def main(argv=None) -> int:
             rs = run_research(f, out)
         except Exception as e:  # noqa: BLE001
             print(f"[警告] 新指标验证失败: {e}", file=sys.stderr)
+    bub = None
+    try:
+        import bubble
+        bub = bubble.run(out, args.offline)
+        if bub:
+            print(f"泡沫体检 {bub['asof']}: {bub['score']} 分({bub['level']})")
+    except Exception as e:  # noqa: BLE001
+        print(f"[警告] 泡沫体检计算失败: {e}", file=sys.stderr)
     rp = write_report(f, sc, alerts, cal, out, w, asof,
                       "新指标的历史检验见 output/research_summary.md" if rs else None)
+    if bub:
+        import bubble
+        for p in (rp, out / "report_latest.md"):
+            p.write_text(p.read_text(encoding="utf-8") + "\n".join(bubble.report_lines(bub)), encoding="utf-8")
     append_daily_log(sc, f, alerts, out / "daily_log.csv")
     try:
         from dashboard import write_dashboard
