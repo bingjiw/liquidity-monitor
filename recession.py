@@ -295,7 +295,7 @@ const rb = $("rRange"), last = x[x.length - 1];
   rb.appendChild(b);
 });
 $("rEp").innerHTML = `<tr><th>衰退开始</th><th>开始前 6–18 个月模型最高概率</th><th>出现在</th></tr>` +
-  R.episodes.map(e => `<tr><td>${e.start}</td><td style="color:${e.max >= 30 ? C("--tight") : C("--muted")}">${f1(e.max)}%</td><td>${e.at}</td></tr>`).join("");
+  R.episodes.map(e => `<tr><td style="white-space:nowrap">${e.start}</td><td style="color:${e.max >= 30 ? C("--tight") : C("--muted")}">${f1(e.max)}%</td><td style="white-space:nowrap">${e.at}</td></tr>`).join("");
 $("rFa").textContent = R.false_alarms.length ? `误报:概率第一次升到 30% 以上、之后 24 个月却没有衰退的有 ${R.false_alarms.join("、")}。` : "";
 $("rSrc").innerHTML = "本次抓取:" + Object.values(R.sources).map(s => `${s.ok ? "✓" : "✗"} ${s.src}(${s.note})`).join(";");
 })();
