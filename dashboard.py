@@ -170,6 +170,12 @@ details{margin-top:10px} summary{cursor:pointer;color:var(--accent)}
 .abar div{display:flex;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden}
 .alab{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px}
 .alab i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px}
+.hgrid{display:grid;grid-template-columns:minmax(260px,1fr) minmax(280px,1.2fr);gap:16px;align-items:start}
+@media (max-width:760px){.hgrid{grid-template-columns:1fr}}
+.hin{display:grid;grid-template-columns:1fr 120px 56px;gap:6px 10px;align-items:center;font-size:14px}
+.hin input{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 8px;width:100%;text-align:right;font-variant-numeric:tabular-nums}
+.hin .sg{color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+.hin i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}
 </style>
 </head>
 <body>
@@ -187,6 +193,21 @@ details{margin-top:10px} summary{cursor:pointer;color:var(--accent)}
     <div class="row" style="margin-top:8px"><button data-gr="etf" class="on">2024 ETF 上市后</button><button data-gr="all">2004 年至今(看历史上的宽松加码)</button></div>
     <div id="cGuide" class="chart" style="height:380px;margin-top:6px"></div>
     <div class="note">把鼠标移到图上任意一天(手机上点一下),上面就显示那一天的操作建议;移开或在最右端就是今天的建议。上图:流动性综合指数 20 日均值,红区 = 低于 35,绿区 = 高于 50,深绿 = 高于 70。下图:每天各资产的建议比例。三档规则:① 20 日均值低于 35 连续 20 天 → 减半(比特币 20%,股票减半,其余放现金),高于 50 连续 20 天 → 恢复正常(比特币 40%);② 美联储任一大规模宽松事件(QE、紧急贷款工具、停止或放慢缩表、购买短债补充准备金等)的第二天 → 宽松加码(比特币 70%、股票 25%、美债 5%),持有约一年。减半信号优先:2025-10/12 联储宣布停止缩表和买短债时,指数已处在减半状态,所以现在没有加码;点“2004 年至今”可以看 2008–09、2010–13、2019–21、2023–25 年等宽松期规则会怎么建议(紫色底色 = 加码,红色底色 = 减半)。2024 年前的比特币比例只是规则输出,不算收益。比例是假设的,只是规则输出,不是投资建议。</div>
+  </div>
+
+  <div class="card" id="holdCard">
+    <h2>我的持仓 vs 建议比例</h2>
+    <div class="sub">在每类资产旁边填你现在实际持有的金额(美元、人民币都行,单位统一就好;也可以直接填百分比)。数据只保存在你这台设备的浏览器里,不会上传到任何地方;换浏览器或清除网站数据后需要重新填。</div>
+    <div class="hgrid" style="margin-top:12px">
+      <div>
+        <div class="hin" id="hIn"></div>
+        <div class="row" style="margin-top:10px"><span class="sub" id="hTotal"></span><button id="hClear" style="margin-left:auto">清空</button></div>
+      </div>
+      <div id="cHold" class="chart" style="height:320px"></div>
+    </div>
+    <div id="hSum" style="margin-top:8px;font-size:14px"></div>
+    <div class="scroll"><table id="hTbl" style="margin-top:8px"></table></div>
+    <div class="note">建议比例取上面“操作指引”今天的数。调整金额 = 总资产 × 建议比例 − 现有金额,按总资产不变计算。差距不到 1 个百分点算基本到位。MSTR 等比特币相关股票可以算进比特币。只是规则输出,不是投资建议。</div>
   </div>
 
   <div class="card">
@@ -842,6 +863,60 @@ document.getElementById("cal").innerHTML = D.calendar.length
       `<td style="text-align:left">${[...c.events.map(e => `<b>${e}</b>`), c.detail].filter(Boolean).join(" · ")}</td></tr>`).join("")
   : `<tr><td class="sub">暂无数据</td></tr>`;
 document.getElementById("calNote").textContent = "金额单位十亿美元。净额 = 结算毛额 − 到期(约数),正数(红)表示从市场抽走现金。";
+
+// 我的持仓 vs 建议比例(数据只存在本机浏览器 localStorage,不上传)
+(() => {
+  const card = document.getElementById("holdCard");
+  if (!D.bt || !D.bt.portfolio || !D.bt.portfolio.guide){ card.style.display = "none"; return; }
+  const G = D.bt.portfolio.guide, names = Object.keys(G.alloc), n = G.dates.length;
+  const target = Object.fromEntries(names.map(k => [k, G.alloc[k][n - 1] || 0]));
+  const HC = {"比特币": "--p2", "美股 VTI": "--p1", "海外股 VXUS": "--p5", "美债 IEF": "--p4", "现金 SGOV": "--neutral"};
+  const hc = k => css(HC[k] || "--muted");
+  const KEY = "lm_holdings_v1";
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { saved = {}; }
+  const pct = v => (v * 100).toFixed(1) + "%";
+  const money = v => Math.round(v).toLocaleString("zh-CN");
+  document.getElementById("hIn").innerHTML = `<span class="sub">资产</span><span class="sub" style="text-align:right">我的持仓</span><span class="sub" style="text-align:right">建议</span>` +
+    names.map((k, i) => `<label for="hv${i}"><i style="background:${hc(k)}"></i>${k}</label>` +
+      `<input id="hv${i}" data-k="${k}" type="text" inputmode="decimal" placeholder="0" value="${saved[k] != null ? saved[k] : ""}">` +
+      `<span class="sg">${+(target[k] * 100).toFixed(1)}%</span>`).join("");
+  const inputs = [...document.querySelectorAll("#hIn input")];
+  const num = s => { const v = parseFloat(String(s).replace(/[,，\s]/g, "")); return isFinite(v) && v > 0 ? v : 0; };
+  function render(){
+    const amt = Object.fromEntries(inputs.map(el => [el.dataset.k, num(el.value)]));
+    const total = names.reduce((a, k) => a + amt[k], 0);
+    document.getElementById("hTotal").textContent = total > 0 ? `合计 ${money(total)}` : "还没有填写持仓";
+    const act = Object.fromEntries(names.map(k => [k, total > 0 ? amt[k] / total : 0]));
+    const cols = ["我的实际持仓", "仪表盘建议"];
+    const tr = names.map(k => ({type:"bar", name:k, x: cols, y: [act[k], target[k]], marker:{color: hc(k)},
+      text: [act[k], target[k]].map(v => v >= 0.04 ? `${k.split(" ")[0]} ${(v*100).toFixed(0)}%` : ""), textposition:"inside", insidetextanchor:"middle",
+      textfont:{color:"#fff", size:12}, hovertemplate: k + " %{y:.1%}<extra></extra>"}));
+    Plotly.react("cHold", tr, baseLayout({barmode:"stack", bargap:0.35, showlegend:false, hovermode:"closest",
+      xaxis:{type:"category", linecolor: css("--line")}, yaxis:{range:[0,1], tickformat:".0%", gridcolor: css("--grid")},
+      margin:{l:44, r:8, t:10, b:30}}), cfg);
+    if (total <= 0){
+      document.getElementById("hSum").innerHTML = `<span class="sub">填入持仓后,这里会列出每类资产要加多少、减多少。</span>`;
+      document.getElementById("hTbl").innerHTML = "";
+      return;
+    }
+    const rows = names.map(k => ({k, a: amt[k], ap: act[k], tp: target[k], d: act[k] - target[k], adj: total * target[k] - amt[k]}));
+    const off = rows.filter(r => Math.abs(r.d) >= 0.01).sort((x, y) => Math.abs(y.d) - Math.abs(x.d));
+    document.getElementById("hSum").innerHTML = off.length === 0 ? `<b>各类资产都已接近建议比例(差距都不到 1 个百分点)。</b>`
+      : `<b>要接近建议比例:</b>` + off.map(r => r.adj < 0
+          ? `<span class="neg">${r.k} 减 ${money(-r.adj)}</span>(多了 ${(r.d*100).toFixed(1)} 个百分点)`
+          : `<span class="pos">${r.k} 加 ${money(r.adj)}</span>(少了 ${(-r.d*100).toFixed(1)} 个百分点)`).join(";") + "。";
+    document.getElementById("hTbl").innerHTML = `<tr><th>资产</th><th>现有金额</th><th>实际比例</th><th>建议比例</th><th>差距</th><th>怎么调</th></tr>` +
+      rows.map(r => { const ok = Math.abs(r.d) < 0.01;
+        return `<tr><td><span class="bar" style="width:10px;background:${hc(r.k)}"></span> ${r.k}</td><td>${money(r.a)}</td><td>${pct(r.ap)}</td><td>${pct(r.tp)}</td>` +
+          `<td class="${ok ? "" : r.d > 0 ? "neg" : "pos"}">${(r.d >= 0 ? "+" : "") + (r.d*100).toFixed(1)} 个百分点</td>` +
+          `<td class="${ok ? "" : r.adj < 0 ? "neg" : "pos"}">${ok ? "基本到位" : r.adj < 0 ? "减 " + money(-r.adj) : "加 " + money(r.adj)}</td></tr>`; }).join("");
+  }
+  const save = () => { try { const o = {}; inputs.forEach(el => { if (el.value.trim() !== "") o[el.dataset.k] = el.value.trim(); }); localStorage.setItem(KEY, JSON.stringify(o)); } catch (e) {} };
+  inputs.forEach(el => el.addEventListener("input", () => { save(); render(); }));
+  document.getElementById("hClear").onclick = () => { inputs.forEach(el => el.value = ""); try { localStorage.removeItem(KEY); } catch (e) {} render(); };
+  render();
+})();
 </script>
 </body>
 </html>
