@@ -90,7 +90,7 @@ QUARTERLY = {"GDP", "PNFI", "NCBEILQ027S", "QUSPAM770A", "CMDEBT", "BCNSDODNS", 
 SHILLER_PAGE = "https://shillerdata.com/"
 # 备用副本:官网链接抓不到时用。按 CAPE 最新月份挑最新的一份。
 SHILLER_XLS = {
-    "https://raw.githubusercontent.com/dbogatic/market_valuation/main/ie_data.xls": "GitHub 副本 dbogatic/market_valuation(MIT)",
+    "https://raw.githubusercontent.com/dbogatic/market_valuation/main/ie_data.xls": "GitHub 副本 dbogatic/market_valuation,MIT 许可",
     "http://www.econ.yale.edu/~shiller/data/ie_data.xls": "耶鲁旧地址",
 }
 SHILLER_CSV = "https://raw.githubusercontent.com/datasets/s-and-p-500/main/data/data.csv"
