@@ -63,7 +63,7 @@ INDICATORS = {
 LAG_Q = 5   # 季度数据:季度开始后约 5 个月可得(Q3 → 12 月)
 LAG_M = 1   # 月度数据:次月可得
 MIN_PILLARS = 3
-EXTRAP_MAX = 12   # CAPE 最多按价格外推 12 个月;Shiller 数据更旧时就不外推,避免高估
+EXTRAP_MAX = 60   # Shiller 数据之后,CAPE 最多延伸 60 个月
 FIRST_MONTH = "1881-01-01"
 
 LEVELS = [(0, "正常", "--loose"), (30, "偏热", "--semiloose"), (45, "过热", "--semitight"), (60, "泡沫区", "--tight")]
@@ -80,8 +80,9 @@ FRED_IDS = {
     "GDP": "名义 GDP(季)", "PNFI": "私人非住宅固定投资(季)", "SP500": "标普 500(日)",
     "NCBEILQ027S": "非金融企业股票市值(季)", "QUSPAM770A": "私人非金融部门信贷/GDP(BIS,季)",
     "CMDEBT": "居民债务(季)", "BCNSDODNS": "非金融企业债务(季)",
+    "CP": "企业税后利润(季,用于延伸 CAPE)", "CPIAUCSL": "CPI(月,用于延伸 CAPE)",
 }
-QUARTERLY = {"GDP", "PNFI", "NCBEILQ027S", "QUSPAM770A", "CMDEBT", "BCNSDODNS"}
+QUARTERLY = {"GDP", "PNFI", "NCBEILQ027S", "QUSPAM770A", "CMDEBT", "BCNSDODNS", "CP"}
 
 SHILLER_PAGE = "https://shillerdata.com/"
 SHILLER_XLS = ["http://www.econ.yale.edu/~shiller/data/ie_data.xls"]
@@ -151,7 +152,8 @@ def shiller() -> tuple[pd.DataFrame, str]:
             try:
                 df = _shiller_from_xls(_get(url, ua=True).content)
                 if df["cape"].notna().sum() > 1000:
-                    return df, "Shiller 官网 ie_data.xls"
+                    print(f"[提示] Shiller 文件: {url}(页面上找到 {len(links)} 个链接)", file=sys.stderr)
+                    return df, "Shiller ie_data.xls" + ("(官网)" if url not in SHILLER_XLS else "(耶鲁旧地址)")
             except Exception as e:  # noqa: BLE001
                 errs.append(f"{url[:80]}: {e}")
     except Exception as e:  # noqa: BLE001
@@ -259,21 +261,31 @@ def features(raw: pd.DataFrame, months: pd.DatetimeIndex) -> pd.DataFrame:
     def col(c):
         return raw[c].dropna() if c in raw else pd.Series(dtype=float)
 
-    # CAPE:Shiller 每月更新但滞后几个月;最新几个月按标普 500 月均价格同比例外推(10 年平均盈利变化很慢)
+    # CAPE:Shiller 数据之后的月份按“实际股价 ÷ 10 年平均实际企业利润”的变化比例延伸。
+    # 价格用标普 500 月均,利润用 NIPA 企业税后利润(季度,错开 5 个月),都用 CPI 换成实际值。
     cape, px = col("cape"), col("sp_price")
-    spx = col("SP500")
-    if len(px) and len(spx):
-        tail = spx[spx.index > px.index[-1]]
-        if len(tail) and px.index[-1] in spx.index:
-            px = pd.concat([px, tail / spx[px.index[-1]] * px.iloc[-1]])
+    spx, cp, cpi = col("SP500"), col("CP"), col("CPIAUCSL")
     if len(cape):
-        ext = px[px.index > cape.index[-1]] / px.get(cape.index[-1], np.nan) * cape.iloc[-1] if len(px) else None
-        if ext is not None:
-            ext = ext[ext.index <= cape.index[-1] + pd.DateOffset(months=EXTRAP_MAX)]
-        if ext is not None and ext.notna().any():
-            cape = pd.concat([cape, ext.dropna()])
+        t0 = cape.index[-1]
+        if len(px) and len(spx):
+            tail = spx[spx.index > px.index[-1]]
+            if len(tail) and px.index[-1] in spx.index:
+                px = pd.concat([px, tail / spx[px.index[-1]] * px.iloc[-1]])
+        ext = None
+        if len(px) and len(cp) and len(cpi) and t0 in px.index:
+            cpim = cpi.resample("MS").last().ffill()
+            rcp = (cp / cpim.reindex(cp.index)).dropna()
+            e10 = _lag(rcp.rolling(40, min_periods=40).mean(), LAG_Q)
+            e10 = e10.reindex(months.union(e10.index)).ffill().reindex(months)
+            cpm = cpim.reindex(months).ffill()
+            rp = px.reindex(months) / cpm
+            ext = cape.iloc[-1] * (rp / rp[t0]) / (e10 / e10[t0])
+            ext = ext[(ext.index > t0) & (ext.index <= t0 + pd.DateOffset(months=EXTRAP_MAX))].dropna()
+        if ext is not None and len(ext):
+            cape = pd.concat([cape, ext])
+            f.attrs["cape_ext_to"] = ext.index[-1].strftime("%Y-%m")
         put("cape", cape, 0)
-        f.attrs["cape_last_actual"] = col("cape").index[-1].strftime("%Y-%m")
+        f.attrs["cape_last_actual"] = t0.strftime("%Y-%m")
 
     gdp = col("GDP")
     eq = col("NCBEILQ027S")
@@ -393,6 +405,7 @@ def run(out: Path, offline: bool = False) -> dict | None:
         "pctile": _r((valid <= valid.iloc[-1]).mean() * 100, 0),
         "first": first.strftime("%Y-%m"),
         "cape_last_actual": f.attrs.get("cape_last_actual"),
+        "cape_ext_to": f.attrs.get("cape_ext_to"),
         "levels": [[t, n, c] for t, n, c in LEVELS],
         "pillars": {p: {**v, "now": _r(s[p].dropna().iloc[-1]) if s[p].notna().any() else None}
                     for p, v in PILLARS.items()},
@@ -452,7 +465,7 @@ HTML = r"""
     <div class="note" id="bCapeNote"></div>
     <h3 class="bH3">指标、阈值和权重</h3>
     <div class="scroll"><table id="bInd"></table></div>
-    <div class="note">打分方法:每个指标在“0 分线”和“100 分线”之间线性换算,超出就封顶在 0 或 100;支柱分 = 该支柱下有数据的指标平均;总分 = 四个支柱按权重加权(缺数据的支柱按剩余权重归一)。<b>阈值和权重都是经验设定,没有经过严格回测</b>,是用来对照历史的体检表,不是择时信号。为了尽量只用当时能看到的数据,季度数据(GDP、Z.1、BIS)往后错开 5 个月,月度数据错开 1 个月;但用的是今天修订后的数值。CAPE 在 Shiller 尚未更新的最近几个月,按标普 500 月均价格同比例外推。第 4 条的“产业链内部循环”(供应商融资、客户拿你的投资回头买你的货)没有公开的宏观数据,只能用企业投资占 GDP 是否过热来近似。利率支柱衡量的是“破裂条件”,泡沫在低利率时可以一直涨,开始加息后才危险。</div>
+    <div class="note">打分方法:每个指标在“0 分线”和“100 分线”之间线性换算,超出就封顶在 0 或 100;支柱分 = 该支柱下有数据的指标平均;总分 = 四个支柱按权重加权(缺数据的支柱按剩余权重归一)。<b>阈值和权重都是经验设定,没有经过严格回测</b>,是用来对照历史的体检表,不是择时信号。为了尽量只用当时能看到的数据,季度数据(GDP、Z.1、BIS)往后错开 5 个月,月度数据错开 1 个月;但用的是今天修订后的数值。CAPE 在 Shiller 数据之后的月份,按“标普 500 实际价格 ÷ 美国企业税后利润(NIPA)10 年实际均值”的变化比例延伸,是近似值。第 4 条的“产业链内部循环”(供应商融资、客户拿你的投资回头买你的货)没有公开的宏观数据,只能用企业投资占 GDP 是否过热来近似。利率支柱衡量的是“破裂条件”,泡沫在低利率时可以一直涨,开始加息后才危险。</div>
     <details><summary>数据来源和本次抓取状态</summary><div id="bSrc" class="note"></div></details>
   </div>
 <style>
@@ -541,7 +554,7 @@ if (B.cape){
           line: {color: C("--muted"), width: 1, dash: "dot"}}))),
       annotations: ce.map(e => ({x: e.month + "-01", y: 1, yref: "paper", yanchor: "bottom", text: e.label.split(" ")[0],
         showarrow: false, font: {size: 11, color: C("--muted")}}))}), cfg);
-  $("bCapeNote").textContent = `绿色虚线 15 倍 = 0 分,红色虚线 35 倍 = 100 分。Shiller 实际数据到 ${B.cape_last_actual || "—"},之后按标普 500 价格外推。CAPE 只看估值,不看杠杆和利率,所以 1929 年(约 30 倍)比 2021 年(约 38 倍)低,但 1929 年借钱买股的程度远高于今天。`;
+  $("bCapeNote").textContent = `绿色虚线 15 倍 = 0 分,红色虚线 35 倍 = 100 分。Shiller 实际数据到 ${B.cape_last_actual || "—"}${B.cape_ext_to ? `,之后到 ${B.cape_ext_to} 按标普 500 价格和美国企业税后利润(NIPA)的变化比例延伸` : ""}。CAPE 只看估值,不看杠杆和利率,所以 1929 年(约 30 倍)比 2021 年(约 38 倍)低,但 1929 年借钱买股的程度远高于今天。`;
 }
 
 // 指标表
