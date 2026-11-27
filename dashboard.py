@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -71,7 +71,7 @@ def write_dashboard(f: pd.DataFrame, sc: pd.DataFrame, alerts: list[str], cal: p
     ff = f.ffill().reindex(idx)
 
     data = {
-        "generated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "generated": datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M 北京时间(与吉隆坡相同)"),
         "dates": [d.strftime("%Y-%m-%d") for d in idx],
         "index": _col(valid, "liquidity_index", 1),
         "pillars_used": _col(valid, "pillars_used", 0),
@@ -91,7 +91,9 @@ def write_dashboard(f: pd.DataFrame, sc: pd.DataFrame, alerts: list[str], cal: p
         "bt": bt,
         "log": json.loads(pd.read_csv(log_path).to_json(orient="records")) if log_path.exists() else [],
     }
-    html = TEMPLATE.replace("__DATA__", json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+    from gears import HTML as GEARS_HTML, SCRIPT as GEARS_SCRIPT
+    html = TEMPLATE.replace("__GEARS__", GEARS_HTML).replace("__GEARS_SCRIPT__", GEARS_SCRIPT)
+    html = html.replace("__DATA__", json.dumps(data, ensure_ascii=False, separators=(",", ":")))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(html, encoding="utf-8")
 
@@ -221,6 +223,8 @@ details{margin-top:10px} summary{cursor:pointer;color:var(--accent)}
     </div>
     <ul class="alerts" id="alerts"></ul>
   </div>
+
+__GEARS__
 
   <div class="card" id="btCard">
     <h2>当前操作信号(净流动性规则)</h2>
@@ -918,6 +922,7 @@ document.getElementById("calNote").textContent = "金额单位十亿美元。净
   render();
 })();
 </script>
+__GEARS_SCRIPT__
 </body>
 </html>
 """
