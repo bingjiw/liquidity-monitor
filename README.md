@@ -14,6 +14,7 @@ python3 liquidity_monitor.py
 - `report_latest.md`:当日报告(综合指数、五大支柱、关键读数、各序列贡献、预警、结算日历)
 - `liquidity_history.csv`:每日指数历史,可以导入 Excel 画图
 - `raw_data.csv`:对齐后的原始数据
+- `credit_archive.csv`:ICE 信用利差存档。FRED 只给最近 3 年,每次运行把新抓到的并进来,更早的日子不再丢
 - `cache/`:下载缓存,某个数据源临时失败时会自动用缓存
 
 ## 可视化仪表盘
