@@ -456,7 +456,7 @@ HTML = r"""
     <div class="sub" id="bLine" style="margin-top:10px"></div>
     <div class="row" style="margin-top:12px" id="bRange"></div>
     <div id="cBubble" class="chart" style="height:400px"></div>
-    <div class="note">粗线是总分,细线是四个支柱(点图例可以显示或隐藏)。竖线是历史上美股大跌前的高点月份。底色:绿 = 正常(&lt;30),浅绿 = 偏热(30–45),橙 = 过热(45–60),红 = 泡沫区(≥60)。总分至少要有 3 个支柱的数据才算,所以从 <span id="bFirst"></span> 开始。</div>
+    <div class="note">黑线是总分;点下面的图例可以加上四个支柱的分线。竖线是历史上美股大跌前的高点月份。底色:绿 = 正常(&lt;30),浅绿 = 偏热(30–45),橙 = 过热(45–60),红 = 泡沫区(≥60)。总分至少要有 3 个支柱的数据才算,所以从 <span id="bFirst"></span> 开始。</div>
     <h3 class="bH3">历史高点对照</h3>
     <div class="scroll"><table id="bEp"></table></div>
     <div class="note">1929 年只有估值数据(CAPE),所以没有总分。日本 1989 年泡沫是日本的数据,这里只看美国。</div>
@@ -516,7 +516,7 @@ const epNotes = epi.map((e, i) => ({x: e.month + "-01", y: 1, yref: "paper", yan
 const traces = [{x, y: B.series.score, name: "总分", type: "scatter", mode: "lines", line: {color: C("--ink"), width: 2.4},
   hovertemplate: "总分 %{y:.1f}<extra></extra>"}].concat(Object.entries(B.pillars).map(([k, p]) => ({
   x, y: B.series[k], name: `${p.short}(${Math.round(p.weight * 100)}%)`, type: "scatter", mode: "lines",
-  line: {color: C(pc[k]), width: 1.2}, opacity: 0.85, hovertemplate: `${p.short} %{y:.0f}<extra></extra>`})));
+  line: {color: C(pc[k]), width: 1.2}, opacity: 0.85, visible: "legendonly", hovertemplate: `${p.short} %{y:.0f}<extra></extra>`})));
 const lay = {paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: {color: C("--ink"), size: 12},
   margin: {l: 40, r: 12, t: 22, b: 30}, hovermode: "x unified", showlegend: true, legend: {orientation: "h", y: -0.12},
   xaxis: {type: "date", gridcolor: C("--grid"), linecolor: C("--line"), hoverformat: "%Y-%m"},
@@ -554,7 +554,7 @@ if (B.cape){
           line: {color: C("--muted"), width: 1, dash: "dot"}}))),
       annotations: ce.map(e => ({x: e.month + "-01", y: 1, yref: "paper", yanchor: "bottom", text: e.label.split(" ")[0],
         showarrow: false, font: {size: 11, color: C("--muted")}}))}), cfg);
-  $("bCapeNote").textContent = `绿色虚线 15 倍 = 0 分,红色虚线 35 倍 = 100 分。Shiller 实际数据到 ${B.cape_last_actual || "—"}${B.cape_ext_to ? `,之后到 ${B.cape_ext_to} 按标普 500 价格和美国企业税后利润(NIPA)的变化比例延伸` : ""}。CAPE 只看估值,不看杠杆和利率,所以 1929 年(约 30 倍)比 2021 年(约 38 倍)低,但 1929 年借钱买股的程度远高于今天。`;
+  $("bCapeNote").textContent = `绿色虚线 15 倍 = 0 分,红色虚线 35 倍 = 100 分。Shiller 实际数据到 ${B.cape_last_actual || "—"}${B.cape_ext_to ? `,之后到 ${B.cape_ext_to} 按标普 500 价格和美国企业税后利润(NIPA)的变化比例延伸` : ""}。CAPE 只看估值,不看杠杆和利率,所以 1929 年(约 33 倍)比 2021 年(约 38 倍)低,但 1929 年借钱买股的程度远高于今天。`;
 }
 
 // 指标表
