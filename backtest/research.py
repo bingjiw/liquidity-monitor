@@ -76,7 +76,7 @@ def load(f: pd.DataFrame | None = None):
     idx = idx[idx >= START]
     F = f.reindex(f.index.union(idx)).sort_index().ffill().reindex(idx)
     # FRED 日度序列次日早上才公布:当天收盘决策只能用前一天的值
-    for c in ("sofr_iorb", "sofr99_iorb", "ccc_oas", "hy_oas", "tips10", "tips5"):
+    for c in ("sofr_iorb", "sofr99_iorb", "ccc_oas", "hy_oas", "tips10", "tips5", "baa_spread"):
         if c in F:
             F[c] = F[c].shift(1)
     vix = F["vix"]
@@ -179,6 +179,34 @@ def study_cross(F, px) -> dict:
             **t, "diverge": div}
 
 
+def study_diverge(F, px) -> dict:
+    """信用走阔而美股仍在一年高点附近("2007 式背离")之后的表现。用 Baa 利差,因为它 2004 年起都有。"""
+    sys.path.insert(0, str(ROOT))
+    from watch import DIV_BAA_BP, DIV_NEAR_HIGH
+    spy = px["SPY"]
+    near = spy >= DIV_NEAR_HIGH * spy.rolling(252, min_periods=200).max()
+    wide = F["baa_spread"].diff(63) * 100 >= DIV_BAA_BP
+    lab = pd.Series(np.where(wide & near, "背离:信用走阔,SPY 仍在高点附近",
+                             np.where(wide, "信用走阔,SPY 已明显回落", "其他")), index=spy.index)
+    lab = lab.where(F["baa_spread"].diff(63).notna() & spy.rolling(252, min_periods=200).max().notna())
+    order = ["背离:信用走阔,SPY 仍在高点附近", "信用走阔,SPY 已明显回落", "其他"]
+    t = group_table(lab, px, order)
+    d = (wide & near).fillna(False)
+    starts, last = [], None
+    for x in d[d].index:  # 相隔 90 天以上算新的一段
+        if last is None or (x - last).days > 90:
+            starts.append(x)
+        last = x
+    mdd = _fwd_mdd(spy, 126)
+    detail = [[x.strftime("%Y-%m-%d"), f"{F['baa_spread'].diff(63)[x] * 100:+.0f}", _pct(_fwd(spy, 60)[x]),
+               _pct(_fwd(spy, 126)[x]), _pct(mdd[x])] for x in starts]
+    return {"title": "7. 信用与股市背离(2007 式):Baa 利差 3 个月走阔、SPY 仍在一年高点附近",
+            "note": f"背离 = Baa 公司债 − 10 年美债利差 63 个交易日内走阔 ≥ {DIV_BAA_BP}BP,同时 SPY 距 252 日最高收盘不到 "
+                    f"{round((1 - DIV_NEAR_HIGH) * 100)}%。Baa 利差用前一天公布的值。ICE 高收益利差在 FRED 只有约 3 年,所以历史检验用 Baa。",
+            **t, "detail_title": "每段背离第一次出现的日子",
+            "detail": {"headers": ["日期", "Baa 3 个月变化 BP", "SPY 后 60 日", "SPY 后 126 日", "126 日内最大跌幅"], "rows": detail}}
+
+
 def study_events(px) -> dict:
     headers = ["日期", "事件"] + [f"{n} 5 日 / 60 日" for _, n in EVENT_ASSETS]
     rows, acc = [], {a: {"r5": [], "r60": []} for a, _ in EVENT_ASSETS}
@@ -228,6 +256,8 @@ VERDICTS = {
            "管道 SOFR−IORB ≥5BP 之后 60 天 −15.8%(14%)。ETF 前这些关系都不存在,指数 <30 时比特币反而上涨。这支持“机构化以后才受流动性影响”的判断。"
            "但月度涨跌和净流动性变化几乎不相关(+0.02),和综合指数变化只有 +0.19,只有 37 个样本,统计上不显著。"
            "按规则操作在 ETF 后把比特币最大回撤从 −53% 降到 −31%~−36%,年化也更高,但只调了 3–5 次仓,运气成分很大。",
+    "diverge": "2004 年以来背离共 83 天、8 段。背离日之后 SPY 60 天平均 −1.1%、上涨概率 41%,明显差于平时的 +2.8%、75%;"
+               "但 8 段里只有 2007-09 和 2015-05 两次之后半年内跌超 10%,其余 6 次之后半年都在涨。样本只有 8 段,只能当提醒,不能单独用来减仓。",
     "overlay": "补数据后最重要的发现:净流动性规则 ③ 在 2004–2018 年失效(择时增益 −2.2%/年,2008 年满仓跌了 54%),"
                "因为 2008 年联储扩表是对危机的反应,规则在暴跌中满仓、在 2009-03 底部减仓。叠加任何新预警都救不回来。"
                "新预警在 2019 年以后也没提高择时增益,只有 HYG 新低和 VIX ≥30 能降低回撤。",
@@ -363,6 +393,10 @@ def run(f: pd.DataFrame | None = None, out: Path = ROOT / "output") -> dict:
             sections.append(dict(b, verdict=VERDICTS.get("btc", "")))
     except Exception as e:  # noqa: BLE001
         print(f"[警告] 比特币检验失败: {e}", file=sys.stderr)
+    try:
+        sections.append(dict(study_diverge(F, px), verdict=VERDICTS["diverge"]))
+    except Exception as e:  # noqa: BLE001
+        print(f"[警告] 信用背离检验失败: {e}", file=sys.stderr)
     L = ["# 新指标历史检验(视频对比讨论的第二批)", "",
          f"数据 {START} ~ {px['SPY'].index[-1].date()}。只做研究,不进仓位规则。样本小的结论只能当参考。", ""]
     for s in sections:

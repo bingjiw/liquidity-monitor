@@ -257,6 +257,53 @@ def margin_summary(s: pd.Series) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# 信用与股市背离("2007 式背离",参考 SunFish98/MacroDashboard 的信用监测)
+# ---------------------------------------------------------------------------
+DIV_BAA_BP = 30      # Baa 利差 3 个月(63 个交易日)走阔至少 30BP
+DIV_NEAR_HIGH = 0.97  # 同时 SPY 在一年最高点 3% 以内
+DIV_HY5_BP = 50      # 短期版:高收益 OAS 5 日走阔超过 50BP,而 QQQ 5 日不跌
+
+
+def divergence(f: pd.DataFrame, m: pd.DataFrame) -> dict | None:
+    """信用在变差、股市却在高位:2007 年 6–10 月就是这样,利差走阔了几个月,标普 10 月才见顶。"""
+    if m.empty or "SPY" not in m or "baa_spread" not in f:
+        return None
+    spy = m["SPY"].dropna()
+    if len(spy) < 260:
+        return None
+    hi = spy.rolling(252, min_periods=200).max()
+    near = float(spy.iloc[-1] / hi.iloc[-1])
+    baa = f["baa_spread"].dropna()
+    baa63 = (baa.iloc[-1] - baa.iloc[-64]) * 100 if len(baa) > 64 else float("nan")
+
+    def chg(c, n, scale=100.0):
+        x = f[c].dropna() if c in f else pd.Series(dtype=float)
+        return round(float((x.iloc[-1] - x.iloc[-1 - n]) * scale), 0) if len(x) > n else None
+
+    hy63, hy5 = chg("hy_oas", 63), chg("hy_oas", 5)
+    hi_ief = f["hyg_ief"].dropna() if "hyg_ief" in f else pd.Series(dtype=float)
+    hyg63 = round(float(hi_ief.iloc[-1] / hi_ief.iloc[-64] - 1), 4) if len(hi_ief) > 64 else None
+    q = m["QQQ"].dropna() if "QQQ" in m else pd.Series(dtype=float)
+    qqq5 = round(float(q.iloc[-1] / q.iloc[-6] - 1), 4) if len(q) > 6 else None
+    long_ = pd.notna(baa63) and baa63 >= DIV_BAA_BP and near >= DIV_NEAR_HIGH
+    short = hy5 is not None and qqq5 is not None and hy5 >= DIV_HY5_BP and qqq5 >= 0
+    return {"date": spy.index[-1].strftime("%Y-%m-%d"), "spy_vs_high": round(near - 1, 4),
+            "baa63_bp": None if pd.isna(baa63) else round(float(baa63), 0), "hy63_bp": hy63, "hy5_bp": hy5,
+            "hyg_ief63": hyg63, "qqq5": qqq5, "long": bool(long_), "short": bool(short), "alarm": bool(long_ or short),
+            "rule": f"Baa 利差 3 个月走阔 ≥ {DIV_BAA_BP}BP 且 SPY 距一年高点不到 {round((1 - DIV_NEAR_HIGH) * 100)}%;"
+                    f"短期版:高收益 OAS 5 日走阔 ≥ {DIV_HY5_BP}BP 且 QQQ 5 日不跌"}
+
+
+def divergence_alert(d: dict | None) -> str | None:
+    if not d or not d["alarm"]:
+        return None
+    if d["long"]:
+        return (f"信用与股市背离(2007 式):Baa 利差 3 个月走阔 {d['baa63_bp']:+.0f}BP,"
+                f"SPY 仍在一年高点 {abs(d['spy_vs_high']):.1%} 以内")
+    return f"信用与股市短期背离:高收益 OAS 5 日走阔 {d['hy5_bp']:+.0f}BP,QQQ 5 日 {d['qqq5']:+.1%}"
+
+
+# ---------------------------------------------------------------------------
 # 汇总
 # ---------------------------------------------------------------------------
 
@@ -302,6 +349,7 @@ def compute(f: pd.DataFrame, raw: pd.DataFrame, out: Path, offline: bool = False
         "margin": margin,
         "maturities": {d.strftime("%Y-%m-%d"): round(float(v), 1) for d, v in mats.items()},
         "gears": _gears(f, raw, m, vix),
+        "diverge": divergence(f, m),
     }
 
 
@@ -340,6 +388,13 @@ def report_lines(w: dict, research_note: str | None = None) -> list[str]:
     if mg:
         L.append(f"- **券商融资余额(FINRA,月度)**:{mg['month']} 为 {mg['value_bn']:,.0f} 十亿美元,"
                  f"同比 {mg['yoy']:+.1%},距 {mg['peak_month']} 峰值 {mg['from_peak']:+.1%}。")
+    dv = w.get("diverge")
+    if dv:
+        L.append(f"- **信用与股市背离**({dv['date']}):Baa 利差 3 个月 {dv['baa63_bp']:+.0f}BP"
+                 + (f",高收益 OAS 3 个月 {dv['hy63_bp']:+.0f}BP、5 日 {dv['hy5_bp']:+.0f}BP" if dv['hy63_bp'] is not None else "")
+                 + (f",HYG/IEF 3 个月 {dv['hyg_ief63']:+.1%}" if dv['hyg_ief63'] is not None else "")
+                 + f";SPY 距一年高点 {dv['spy_vs_high']:+.1%}。"
+                 + ("**背离警报。**" if dv["alarm"] else "未触发。") + f"规则:{dv['rule']}。")
     if w.get("gears"):
         import gears
         g = gears.report_line(w["gears"])

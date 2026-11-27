@@ -300,6 +300,7 @@ __GEARS__
       <div class="wbox" id="wReb"></div>
       <div class="wbox" id="wCross"></div>
     </div>
+    <div class="wbox" id="wDiv" style="margin-top:12px"></div>
     <div class="grid2" style="margin-top:12px">
       <div><div class="sub">SOFR − IORB 近一年(BP),背景 = 分档</div><div id="cPipe" class="chart" style="height:220px"></div></div>
       <div><div class="sub">黄金(GLD)与纳指(QQQ)20 日收益相关性</div><div id="cCorr" class="chart" style="height:220px"></div></div>
@@ -798,6 +799,16 @@ else {
       (X.tips10_5d_bp == null ? "" : `<div class="sub">10 年 TIPS 5 日变化 ${X.tips10_5d_bp > 0 ? "+" : ""}${X.tips10_5d_bp} BP${X.gold_rate_diverge ? ",<b class='neg'>黄金逆着实际利率下跌,疑似被砍仓</b>" : ""}</div>`) +
       (X.alarm ? `<div class="neg" style="margin-top:4px"><b>砍仓警报</b></div>` : "")
     : `<h3>跨资产砍仓检测</h3><div class="sub">缺少 GLD 价格数据</div>`;
+  const DV = W.diverge, dEl = document.getElementById("wDiv");
+  const sgn = (v, d = 0, u = "") => v == null ? "—" : (v > 0 ? "+" : "") + Number(v).toFixed(d) + u;
+  if (!DV) dEl.style.display = "none";
+  else dEl.innerHTML = `<h3>信用与股市背离(2007 式:信用先坏,股市还在高位)</h3>` +
+    `<div class="v ${DV.alarm ? "neg" : ""}">${DV.alarm ? (DV.long ? "背离警报" : "短期背离") : "未触发"}</div>` +
+    `<div>Baa 利差 3 个月 <b class="${DV.baa63_bp > 0 ? "neg" : "pos"}">${sgn(DV.baa63_bp, 0, " BP")}</b> · ` +
+    `高收益 OAS 3 个月 <b>${sgn(DV.hy63_bp, 0, " BP")}</b>、5 日 <b>${sgn(DV.hy5_bp, 0, " BP")}</b> · ` +
+    `HYG/IEF 3 个月 <b>${DV.hyg_ief63 == null ? "—" : sgn(DV.hyg_ief63 * 100, 1, "%")}</b></div>` +
+    `<div>SPY 距一年高点 <b>${sgn(DV.spy_vs_high * 100, 1, "%")}</b> · QQQ 5 日 <b>${DV.qqq5 == null ? "—" : sgn(DV.qqq5 * 100, 1, "%")}</b>(${DV.date})</div>` +
+    `<div class="sub">规则:${DV.rule}。历史检验见下面“新指标历史检验”。</div>`;
   const vl = W.vix_latest, mg = W.margin;
   document.getElementById("wNote").innerHTML =
     (vl ? `最新 VIX ${fmt(vl.value, 2)}(${vl.date},FRED 滞后时用 Yahoo 当日收盘补)。` : "") +
