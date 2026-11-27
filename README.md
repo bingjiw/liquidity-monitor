@@ -52,3 +52,7 @@ python3 liquidity_monitor.py
 权重、序列、预警阈值都在脚本开头的配置区:`PILLAR_WEIGHTS`、`SCORED`、`ALERTS`。某个 FRED 序列下载失败时脚本会跳过它,并按剩余权重重新归一。
 
 仅用于研究,不构成投资建议。
+
+## 衰退概率
+
+`recession.py` 给仪表盘补上实体经济一层,只做观察、不进仓位规则:纽约联储收益率曲线模型(10 年 − 3 个月利差,看 12 个月后)、Sahm 规则(实时失业率)、Chauvet–Piger 平滑衰退概率,都从 FRED 免费获取。结果在 `output/recession.json`,报告末尾也有一节。
