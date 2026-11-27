@@ -28,6 +28,7 @@ RAW_SERIES = {
     "baa_spread":      ("Baa 公司债 − 10 年美债利差(长历史)", "%", "C 信用价格", None),
     "ccc_cost_approx": ("CCC 借钱成本(5 年美债 + CCC OAS)", "%", "C 信用价格", None),
     "hy_oas":          ("高收益债 OAS", "%", "C 信用价格", None),
+    "hyg_ief":         ("高收益债 HYG / 国债 IEF 价格比(越高越松,2007 年起)", "", "C 信用价格", None),
     "ig_oas":          ("投资级 OAS", "%", "C 信用价格", None),
     "real_policy_rate":("实际政策利率(EFFR − 核心 PCE)", "%", "D 利率与政策", None),
     "tips5":           ("5 年 TIPS 实际收益率", "%", "D 利率与政策", None),

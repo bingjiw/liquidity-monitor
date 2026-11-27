@@ -118,6 +118,7 @@ SCORED = [
     ("ig_oas",              "C_credit", -1, "投资级 OAS"),
     ("ccc_bb_gap",          "C_credit", -1, "CCC 与 BB 利差之差"),
     ("baa_spread",          "C_credit", -1, "Baa 公司债利差(长历史)"),
+    ("hyg_ief",             "C_credit", +1, "高收益债 HYG / 国债 IEF 价格比(2007 年起,ICE 利差的长期替代)"),
 
     ("real_policy_rate",    "D_rates", -1, "实际政策利率(EFFR − 核心 PCE 同比)"),
     ("tips5",               "D_rates", -1, "5 年 TIPS 实际收益率"),
@@ -131,6 +132,10 @@ SCORED = [
     ("stlfsi",              "E_stress", -1, "金融压力指数"),
     ("ofr_fsi",             "E_stress", -1, "OFR 金融压力指数"),
 ]
+
+# ICE 信用利差:FRED 只提供最近 3 年,每天抓到的都合并进 output/credit_archive.csv(随仓库提交),
+# 这样以后最早的日子不会再随窗口滚动丢掉。
+ARCHIVED = ["BAMLH0A3HYC", "BAMLH0A3HYCEY", "BAMLH0A0HYM2", "BAMLC0A0CM", "BAMLH0A1HYBB"]
 
 # 硬预警
 ALERTS = {
@@ -335,6 +340,32 @@ def load_all(cache_dir: Path, offline: bool) -> pd.DataFrame:
         print(f"  {name:15s} {len(s):6d} 条, 最新 {s.index.max().date()}")
     raw = pd.DataFrame(frames).sort_index()
     raw = raw[~raw.index.duplicated(keep="last")]
+    raw = merge_archive(raw, cache_dir.parent / "credit_archive.csv")
+    mk = cache_dir.parent / "market.csv"
+    if mk.exists():
+        try:
+            m = pd.read_csv(mk, index_col=0, parse_dates=True)
+            if {"HYG", "IEF"} <= set(m.columns):
+                raw = raw.join((m["HYG"] / m["IEF"]).dropna().rename("HYG_IEF"), how="outer")
+        except Exception as e:  # noqa: BLE001
+            print(f"[警告] 读取 HYG/IEF 失败: {e}", file=sys.stderr)
+    return raw
+
+
+def merge_archive(raw: pd.DataFrame, path: Path) -> pd.DataFrame:
+    """把本次抓到的 ICE 利差并入存档:同一天以新数据为准,存档里更早的日子保留。"""
+    arch = pd.read_csv(path, index_col=0, parse_dates=True) if path.exists() else pd.DataFrame()
+    cols = [c for c in ARCHIVED if c in raw or c in arch]
+    if not cols:
+        return raw
+    merged = pd.DataFrame({c: (raw[c].dropna() if c in raw else pd.Series(dtype=float))
+                           .combine_first(arch[c].dropna() if c in arch else pd.Series(dtype=float))
+                           for c in cols}).sort_index()
+    merged.index.name = "date"
+    merged.to_csv(path, float_format="%.4f")
+    first = merged.apply(lambda s: s.first_valid_index()).min()
+    print(f"  信用利差存档 {len(merged)} 天,最早 {first.date() if first is not None else '-'}")
+    raw = raw.drop(columns=[c for c in cols if c in raw]).join(merged, how="outer")
     return raw
 
 # ---------------------------------------------------------------------------
@@ -380,6 +411,7 @@ def build_features(raw: pd.DataFrame) -> pd.DataFrame:
     f["ccc_bb_gap"] = col("BAMLH0A3HYC") - col("BAMLH0A1HYBB")
     f["ust5"] = col("DGS5")
     f["baa_spread"] = col("BAA10Y")
+    f["hyg_ief"] = col("HYG_IEF")
     f["ccc_cost_approx"] = f["ust5"] + f["ccc_oas"]  # 视频里的算法:5 年美债 + CCC 利差
 
     # D 利率
