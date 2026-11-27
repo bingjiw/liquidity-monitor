@@ -677,12 +677,27 @@ def main(argv=None) -> int:
             print(f"泡沫体检 {bub['asof']}: {bub['score']} 分({bub['level']})")
     except Exception as e:  # noqa: BLE001
         print(f"[警告] 泡沫体检计算失败: {e}", file=sys.stderr)
+    rec = None
+    try:
+        import recession
+        rec = recession.run(out, args.offline)
+        if rec:
+            print(f"衰退概率 {rec['asof']}: 曲线模型 {rec['prob']}%(到 {rec['target']}),Sahm {rec['sahm']['value']},"
+                  f"C–P {rec['cp']['value']}%")
+    except Exception as e:  # noqa: BLE001
+        print(f"[警告] 衰退概率计算失败: {e}", file=sys.stderr)
     rp = write_report(f, sc, alerts, cal, out, w, asof,
                       "新指标的历史检验见 output/research_summary.md" if rs else None)
+    extra = []
     if bub:
         import bubble
+        extra += bubble.report_lines(bub)
+    if rec:
+        import recession
+        extra += recession.report_lines(rec)
+    if extra:
         for p in (rp, out / "report_latest.md"):
-            p.write_text(p.read_text(encoding="utf-8") + "\n".join(bubble.report_lines(bub)), encoding="utf-8")
+            p.write_text(p.read_text(encoding="utf-8") + "\n".join(extra), encoding="utf-8")
     append_daily_log(sc, f, alerts, out / "daily_log.csv")
     try:
         from dashboard import write_dashboard
