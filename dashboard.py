@@ -876,6 +876,7 @@ document.getElementById("calNote").textContent = "金额单位十亿美元。净
   const target = Object.fromEntries(names.map(k => [k, G.alloc[k][n - 1] || 0]));
   const HC = {"比特币": "--p2", "美股 VTI": "--p1", "海外股 VXUS": "--p5", "美债 IEF": "--p4", "现金 SGOV": "--neutral"};
   const hc = k => css(HC[k] || "--muted");
+  const lab = k => { const [a, b] = k.split(" "); return b ? `${a}（${b}）` : a; };
   const KEY = "lm_holdings_v1";
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { saved = {}; }
@@ -894,7 +895,7 @@ document.getElementById("calNote").textContent = "金额单位十亿美元。净
     const act = Object.fromEntries(names.map(k => [k, total > 0 ? amt[k] / total : 0]));
     const cols = ["我的实际持仓", "仪表盘建议"];
     const tr = names.map(k => ({type:"bar", name:k, x: cols, y: [act[k], target[k]], marker:{color: hc(k)},
-      text: [act[k], target[k]].map(v => v >= 0.04 ? `${k.split(" ")[0]} ${(v*100).toFixed(0)}%` : ""), textposition:"inside", insidetextanchor:"middle",
+      text: [act[k], target[k]].map(v => v < 0.04 ? "" : `${v >= 0.08 ? lab(k) : k.split(" ")[0]} ${+(v*100).toFixed(1)}%`), textposition:"inside", insidetextanchor:"middle", textangle:0,
       textfont:{color:"#fff", size:12}, hovertemplate: k + " %{y:.1%}<extra></extra>"}));
     Plotly.react("cHold", tr, baseLayout({barmode:"stack", bargap:0.35, showlegend:false, hovermode:"closest",
       xaxis:{type:"category", linecolor: css("--line")}, yaxis:{range:[0,1], tickformat:".0%", gridcolor: css("--grid")},
