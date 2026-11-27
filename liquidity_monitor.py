@@ -660,6 +660,9 @@ def main(argv=None) -> int:
         import watch
         asof = watch.asof_dates(raw)
         w = watch.compute(f, raw, out, args.offline)
+        da = watch.divergence_alert(w.get("diverge"))
+        if da:
+            alerts.append(da)
     except Exception as e:  # noqa: BLE001
         print(f"[警告] 观察指标计算失败: {e}", file=sys.stderr)
     if (out / "market.csv").exists():
