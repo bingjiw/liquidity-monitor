@@ -176,7 +176,9 @@ details{margin-top:10px} summary{cursor:pointer;color:var(--accent)}
 .alab i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px}
 .hgrid{display:grid;grid-template-columns:minmax(260px,1fr) minmax(280px,1.2fr);gap:16px;align-items:start}
 @media (max-width:760px){.hgrid{grid-template-columns:1fr}}
-.hin{display:grid;grid-template-columns:1fr 120px 56px;gap:6px 10px;align-items:center;font-size:14px}
+#hTbl td:last-child{white-space:nowrap}
+@media (max-width:560px){#hTbl .hm{display:none}#hTbl th,#hTbl td{padding:7px 4px}}
+.hin{display:grid;grid-template-columns:1fr 110px 58px 50px;gap:6px 8px;align-items:center;font-size:14px}
 .hin input{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 8px;width:100%;text-align:right;font-variant-numeric:tabular-nums}
 .hin .sg{color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
 .hin i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}
@@ -884,17 +886,21 @@ document.getElementById("calNote").textContent = "金额单位十亿美元。净
   try { saved = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { saved = {}; }
   const pct = v => (v * 100).toFixed(1) + "%";
   const money = v => Math.round(v).toLocaleString("zh-CN");
-  document.getElementById("hIn").innerHTML = `<span class="sub">资产</span><span class="sub" style="text-align:right">我的持仓</span><span class="sub" style="text-align:right">建议</span>` +
+  document.getElementById("hIn").innerHTML = `<span class="sub">资产</span><span class="sub" style="text-align:right">我的持仓</span><span class="sub" style="text-align:right">折算</span><span class="sub" style="text-align:right">建议</span>` +
     names.map((k, i) => `<label for="hv${i}"><i style="background:${hc(k)}"></i>${k}</label>` +
       `<input id="hv${i}" data-k="${k}" type="text" inputmode="decimal" placeholder="0" value="${saved[k] != null ? saved[k] : ""}">` +
-      `<span class="sg">${+(target[k] * 100).toFixed(1)}%</span>`).join("");
+      `<span class="sg hp" style="color:var(--ink)">—</span><span class="sg">${+(target[k] * 100).toFixed(1)}%</span>`).join("");
   const inputs = [...document.querySelectorAll("#hIn input")];
   const num = s => { const v = parseFloat(String(s).replace(/[,，\s]/g, "")); return isFinite(v) && v > 0 ? v : 0; };
   function render(){
     const amt = Object.fromEntries(inputs.map(el => [el.dataset.k, num(el.value)]));
     const total = names.reduce((a, k) => a + amt[k], 0);
-    document.getElementById("hTotal").textContent = total > 0 ? `合计 ${money(total)}` : "还没有填写持仓";
+    const asPct = Math.abs(total - 100) < 0.5;
+    const mv = v => asPct ? (+v.toFixed(1)) + "%" : money(v);
+    document.getElementById("hTotal").textContent = total <= 0 ? "还没有填写持仓"
+      : asPct ? `合计 ${+total.toFixed(2)},按百分比处理` : `合计 ${money(total)},已折算成百分比(见“折算”一列)`;
     const act = Object.fromEntries(names.map(k => [k, total > 0 ? amt[k] / total : 0]));
+    document.querySelectorAll("#hIn .hp").forEach((el, i) => el.textContent = total > 0 ? pct(act[names[i]]) : "—");
     const cols = ["我的实际持仓", "仪表盘建议"];
     const tr = names.map(k => ({type:"bar", name:k, x: cols, y: [act[k], target[k]], marker:{color: hc(k)},
       text: [act[k], target[k]].map(v => v < 0.04 ? "" : `${v >= 0.08 ? lab(k) : k.split(" ")[0]} ${+(v*100).toFixed(1)}%`), textposition:"inside", insidetextanchor:"middle", textangle:0,
@@ -911,13 +917,13 @@ document.getElementById("calNote").textContent = "金额单位十亿美元。净
     const off = rows.filter(r => Math.abs(r.d) >= 0.01).sort((x, y) => Math.abs(y.d) - Math.abs(x.d));
     document.getElementById("hSum").innerHTML = off.length === 0 ? `<b>各类资产都已接近建议比例(差距都不到 1 个百分点)。</b>`
       : `<b>要接近建议比例:</b>` + off.map(r => r.adj < 0
-          ? `<span class="neg">${r.k} 减 ${money(-r.adj)}</span>(多了 ${(r.d*100).toFixed(1)} 个百分点)`
-          : `<span class="pos">${r.k} 加 ${money(r.adj)}</span>(少了 ${(-r.d*100).toFixed(1)} 个百分点)`).join(";") + "。";
-    document.getElementById("hTbl").innerHTML = `<tr><th>资产</th><th>现有金额</th><th>实际比例</th><th>建议比例</th><th>差距</th><th>怎么调</th></tr>` +
+          ? `<span class="neg">${r.k} 减 ${mv(-r.adj)}</span>${asPct ? "" : `(多了 ${(r.d*100).toFixed(1)} 个百分点)`}`
+          : `<span class="pos">${r.k} 加 ${mv(r.adj)}</span>${asPct ? "" : `(少了 ${(-r.d*100).toFixed(1)} 个百分点)`}`).join(";") + "。";
+    document.getElementById("hTbl").innerHTML = `<tr><th>资产</th><th class="hm">现有金额</th><th>实际比例</th><th>建议比例</th><th>差距(百分点)</th><th>怎么调</th></tr>` +
       rows.map(r => { const ok = Math.abs(r.d) < 0.01;
-        return `<tr><td><span class="bar" style="width:10px;background:${hc(r.k)}"></span> ${r.k}</td><td>${money(r.a)}</td><td>${pct(r.ap)}</td><td>${pct(r.tp)}</td>` +
-          `<td class="${ok ? "" : r.d > 0 ? "neg" : "pos"}">${(r.d >= 0 ? "+" : "") + (r.d*100).toFixed(1)} 个百分点</td>` +
-          `<td class="${ok ? "" : r.adj < 0 ? "neg" : "pos"}">${ok ? "基本到位" : r.adj < 0 ? "减 " + money(-r.adj) : "加 " + money(r.adj)}</td></tr>`; }).join("");
+        return `<tr><td><span class="bar" style="width:10px;background:${hc(r.k)}"></span> ${r.k}</td><td class="hm">${mv(r.a)}</td><td>${pct(r.ap)}</td><td>${pct(r.tp)}</td>` +
+          `<td class="${ok ? "" : r.d > 0 ? "neg" : "pos"}">${(r.d >= 0 ? "+" : "") + (r.d*100).toFixed(1)}</td>` +
+          `<td class="${ok ? "" : r.adj < 0 ? "neg" : "pos"}">${ok ? "基本到位" : r.adj < 0 ? "减 " + mv(-r.adj) : "加 " + mv(r.adj)}</td></tr>`; }).join("");
   }
   const save = () => { try { const o = {}; inputs.forEach(el => { if (el.value.trim() !== "") o[el.dataset.k] = el.value.trim(); }); localStorage.setItem(KEY, JSON.stringify(o)); } catch (e) {} };
   inputs.forEach(el => el.addEventListener("input", () => { save(); render(); }));
