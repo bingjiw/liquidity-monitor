@@ -1,7 +1,7 @@
 """泡沫体检:按月给美股的泡沫程度打 0–100 分,可回看到 1950 年代(估值单项回到 1881 年)。
 
 依据四个问题(技术是真的,破的往往是价格):
-  1 利润追不追得上价格   —— Shiller CAPE、股票市值/GDP
+  1 利润追不追得上价格   —— Shiller CAPE、超额 CAPE 收益率(ECY,把利率考虑进去)、股票市值/GDP
   2 钱是借来的还是赚来的 —— 私人部门信贷缺口(BIS 方法)、券商融资余额同比、BAA 信用利差
   3 利率周期             —— 联邦基金利率 24 个月变化、10 年美债 − 联邦基金利率
   4 钱是不是在产业链里转 —— 企业设备/厂房投资占 GDP 偏离 10 年均值(只是代理指标,
@@ -44,6 +44,9 @@ PILLARS = {
 INDICATORS = {
     "cape": ("P1", "Shiller CAPE(周期调整市盈率)", "倍", 15.0, 35.0,
              "股价 ÷ 过去 10 年平均实际盈利。越高说明价格跑得越远于利润。"),
+    "ecy": ("P1", "超额 CAPE 收益率(ECY)", "%", 6.0, 0.0,
+            "1/CAPE − 10 年美债实际利率(10 年美债 − 过去 10 年年均通胀),Shiller 的算法。股票盈利收益率比债券实际利率多出多少;"
+            "越低说明相对债券越贵(分越高)。它把利率水平考虑进估值:同样的 CAPE,利率越高越危险。"),
     "mcap_gdp": ("P1", "股票市值 / GDP", "%", 60.0, 180.0,
                  "非金融企业股票市值(美联储 Z.1)÷ 名义 GDP,俗称巴菲特指标。"),
     "credit_gap": ("P2", "私人部门信贷缺口", "个百分点", 0.0, 10.0,
@@ -85,7 +88,11 @@ FRED_IDS = {
 QUARTERLY = {"GDP", "PNFI", "NCBEILQ027S", "QUSPAM770A", "CMDEBT", "BCNSDODNS", "CP"}
 
 SHILLER_PAGE = "https://shillerdata.com/"
-SHILLER_XLS = ["http://www.econ.yale.edu/~shiller/data/ie_data.xls"]
+# 备用副本:官网链接抓不到时用。按 CAPE 最新月份挑最新的一份。
+SHILLER_XLS = {
+    "https://raw.githubusercontent.com/dbogatic/market_valuation/main/ie_data.xls": "GitHub 副本 dbogatic/market_valuation,MIT 许可",
+    "http://www.econ.yale.edu/~shiller/data/ie_data.xls": "耶鲁旧地址",
+}
 SHILLER_CSV = "https://raw.githubusercontent.com/datasets/s-and-p-500/main/data/data.csv"
 
 ROOT = Path(__file__).resolve().parent
@@ -137,10 +144,14 @@ def _shiller_from_xls(content: bytes) -> pd.DataFrame:
     yr = d[ok].astype(float).apply(math.floor)
     mo = ((d[ok].astype(float) - yr) * 100).round().astype(int)   # 1871.1 = 10 月
     idx = pd.to_datetime(dict(year=yr.astype(int), month=mo, day=1))
-    out = pd.DataFrame({"sp_price": pd.to_numeric(body.loc[ok].iloc[:, 1], errors="coerce").values,
-                        "cape": pd.to_numeric(body.loc[ok].iloc[:, ccape], errors="coerce").values},
+    cols = {"sp_price": 1, "cape": ccape}
+    for name, h in (("sh_cpi", "CPI"), ("sh_gs10", "RATE GS10")):
+        j = next((j for j, x in enumerate(heads) if x.upper() == h), None)
+        if j is not None:
+            cols[name] = j
+    out = pd.DataFrame({k: pd.to_numeric(body.loc[ok].iloc[:, j], errors="coerce").values for k, j in cols.items()},
                        index=pd.DatetimeIndex(idx.values))
-    return out
+    return out[~out.index.duplicated(keep="last")]
 
 
 def shiller() -> tuple[pd.DataFrame, str]:
@@ -148,16 +159,22 @@ def shiller() -> tuple[pd.DataFrame, str]:
     try:
         page = _get(SHILLER_PAGE, ua=True).text
         links = re.findall(r'(https?://[^"\'\s<>]*ie_data\.xls[^"\'\s<>]*)', page)
-        for url in list(dict.fromkeys(l.replace("&amp;", "&") for l in links)) + SHILLER_XLS:
-            try:
-                df = _shiller_from_xls(_get(url, ua=True).content)
-                if df["cape"].notna().sum() > 1000:
-                    print(f"[提示] Shiller 文件: {url}(页面上找到 {len(links)} 个链接)", file=sys.stderr)
-                    return df, "Shiller ie_data.xls" + ("(官网)" if url not in SHILLER_XLS else "(耶鲁旧地址)")
-            except Exception as e:  # noqa: BLE001
-                errs.append(f"{url[:80]}: {e}")
     except Exception as e:  # noqa: BLE001
+        links = []
         errs.append(str(e))
+    best = None
+    for url in list(dict.fromkeys(l.replace("&amp;", "&") for l in links)) + list(SHILLER_XLS):
+        try:
+            df = _shiller_from_xls(_get(url, ua=True).content)
+            if df["cape"].notna().sum() > 1000:
+                last = df["cape"].dropna().index[-1]
+                print(f"[提示] Shiller 文件 {url[:90]}:CAPE 到 {last:%Y-%m}", file=sys.stderr)
+                if best is None or last > best[0]:
+                    best = (last, df, "Shiller ie_data.xls(" + SHILLER_XLS.get(url, "官网") + ")")
+        except Exception as e:  # noqa: BLE001
+            errs.append(f"{url[:80]}: {e}")
+    if best:
+        return best[1], best[2]
     try:
         c = pd.read_csv(io.StringIO(_get(SHILLER_CSV).text), parse_dates=["Date"], index_col="Date")
         df = pd.DataFrame({"sp_price": c["SP500"].where(c["SP500"] > 0),
@@ -213,13 +230,18 @@ def load(out: Path, offline: bool = False) -> tuple[pd.DataFrame, dict]:
         df, lab = shiller()
         sh["label"] = lab
         cols["sp_price"] = df["sp_price"].dropna()
+        for c in ("sh_cpi", "sh_gs10"):
+            if c in df:
+                cols[c] = df[c].dropna()
         return df["cape"].dropna()
 
     safe("cape", get_shiller, "Shiller")
     if "label" in sh:
         status["cape"]["src"] = sh["label"]
-    elif "sp_price" in prev:
-        cols["sp_price"] = prev["sp_price"].dropna()
+    else:
+        for c in ("sp_price", "sh_cpi", "sh_gs10"):
+            if c in prev:
+                cols[c] = prev[c].dropna()
     for sid, lab in FRED_IDS.items():
         safe(sid, lambda sid=sid: fred(sid), f"FRED {sid}:{lab}")
     safe("margin", lambda: margin(out), "FINRA 券商融资余额")
@@ -286,6 +308,22 @@ def features(raw: pd.DataFrame, months: pd.DatetimeIndex) -> pd.DataFrame:
             f.attrs["cape_ext_to"] = ext.index[-1].strftime("%Y-%m")
         put("cape", cape, 0)
         f.attrs["cape_last_actual"] = t0.strftime("%Y-%m")
+        # 超额 CAPE 收益率:Shiller 的 CPI 和 10 年利率在前,之后接 FRED(CPI 按重叠月份的比例拼接)
+        cpi_l = col("sh_cpi")
+        if len(cpi):
+            fc = cpi.resample("MS").last()
+            if len(cpi_l):
+                common = cpi_l.index.intersection(fc.index)
+                k = (cpi_l[common] / fc[common]).iloc[-12:].mean() if len(common) else float("nan")
+                cpi_l = cpi_l.combine_first(fc * k) if pd.notna(k) else cpi_l
+            else:
+                cpi_l = fc
+        y10 = col("sh_gs10").combine_first(col("GS10"))
+        if len(cpi_l) and len(y10) and len(cape):
+            infl10 = ((cpi_l / cpi_l.shift(120)) ** 0.1 - 1) * 100
+            m_all = months.union(cape.index)
+            ecy = 100 / cape.reindex(m_all) - (y10.reindex(m_all).ffill(limit=2) - infl10.reindex(m_all).ffill(limit=2))
+            put("ecy", ecy.dropna(), 0)
 
     gdp = col("GDP")
     eq = col("NCBEILQ027S")
