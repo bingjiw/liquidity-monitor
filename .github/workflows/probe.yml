@@ -1,0 +1,16 @@
+name: probe
+on:
+  push:
+    branches: ["claude/project-thread-asniaq"]
+    paths: [".github/workflows/probe.yml"]
+jobs:
+  p:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          for u in \
+            "https://alfred.stlouisfed.org/graph/alfredgraph.csv?id=BAMLH0A0HYM2&vintage_date=2023-01-03" \
+            "https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2&vintage_date=2023-01-03" \
+            "https://alfred.stlouisfed.org/graph/alfredgraph.csv?id=BAMLH0A0HYM2_20230103" \
+            "https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A3HYC&cosd=1990-01-01" ; do
+            echo "== $u"; curl -sL -m 60 "$u" -o o.csv -w "%{http_code} %{size_download}\n"; head -3 o.csv; tail -2 o.csv; wc -l o.csv; done
