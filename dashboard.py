@@ -92,7 +92,9 @@ def write_dashboard(f: pd.DataFrame, sc: pd.DataFrame, alerts: list[str], cal: p
         "log": json.loads(pd.read_csv(log_path).to_json(orient="records")) if log_path.exists() else [],
     }
     from gears import HTML as GEARS_HTML, SCRIPT as GEARS_SCRIPT
-    html = TEMPLATE.replace("__GEARS__", GEARS_HTML).replace("__GEARS_SCRIPT__", GEARS_SCRIPT)
+    from bubble import page as bubble_page
+    bub_html, bub_script = bubble_page(log_path.parent)
+    html = TEMPLATE.replace("__GEARS__", GEARS_HTML + bub_html).replace("__GEARS_SCRIPT__", GEARS_SCRIPT + bub_script)
     html = html.replace("__DATA__", json.dumps(data, ensure_ascii=False, separators=(",", ":")))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(html, encoding="utf-8")

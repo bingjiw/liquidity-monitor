@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pandas requests openpyxl
+      - run: pip install pandas requests openpyxl xlrd
       - name: Fetch SPY/QQQ prices for the calibrated signal
         run: python backtest/fetch_market.py
         continue-on-error: true
