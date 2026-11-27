@@ -301,7 +301,17 @@ def compute(f: pd.DataFrame, raw: pd.DataFrame, out: Path, offline: bool = False
                        "date": vix.index[-1].strftime("%Y-%m-%d")} if len(vix) else None,
         "margin": margin,
         "maturities": {d.strftime("%Y-%m-%d"): round(float(v), 1) for d, v in mats.items()},
+        "gears": _gears(f, raw, m, vix),
     }
+
+
+def _gears(f, raw, m, vix):
+    try:
+        import gears
+        return gears.compute(f, raw, m, vix)
+    except Exception as e:  # noqa: BLE001
+        print(f"[警告] 传动图计算失败: {e}", file=sys.stderr)
+        return None
 
 
 def report_lines(w: dict, research_note: str | None = None) -> list[str]:
@@ -330,6 +340,11 @@ def report_lines(w: dict, research_note: str | None = None) -> list[str]:
     if mg:
         L.append(f"- **券商融资余额(FINRA,月度)**:{mg['month']} 为 {mg['value_bn']:,.0f} 十亿美元,"
                  f"同比 {mg['yoy']:+.1%},距 {mg['peak_month']} 峰值 {mg['from_peak']:+.1%}。")
+    if w.get("gears"):
+        import gears
+        g = gears.report_line(w["gears"])
+        if g:
+            L.append(g)
     if research_note:
         L.append(f"- {research_note}")
     L.append("")
