@@ -304,6 +304,49 @@ def divergence_alert(d: dict | None) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# 逆回购缓冲状态(参考 cvalienteDS/fed-liquidity-monitor 的 RRP 耗尽判定)
+# ---------------------------------------------------------------------------
+RRP_EMPTY_BN = 100   # 逆回购低于 1000 亿美元 = 缓冲耗尽
+
+
+def _tga_pass_through(f: pd.DataFrame, since: str = "2009-01-01") -> dict:
+    """按周数据回归:TGA 4 周变化 1 美元,准备金和逆回购各变多少(控制联储总资产变化)。按当时的逆回购余额分组。"""
+    import numpy as np
+    w = f[["reserves", "tga", "rrp", "fed_assets"]].resample("W-WED").last().dropna()
+    d = w.diff(4).dropna()
+    rr = w["rrp"].shift(4).reindex(d.index)
+    out = {}
+    for key, mask in (("empty", rr < RRP_EMPTY_BN), ("buffer", rr >= RRP_EMPTY_BN)):
+        x = d[mask & (d.index >= since)]
+        if len(x) < 30:
+            continue
+        X = np.c_[x["tga"], x["fed_assets"], np.ones(len(x))]
+        res = np.linalg.lstsq(X, x["reserves"], rcond=None)[0][0]
+        rrp = np.linalg.lstsq(X, x["rrp"], rcond=None)[0][0]
+        out[key] = {"reserves": round(float(res), 2), "rrp": round(float(rrp), 2), "weeks": int(len(x))}
+    return out
+
+
+def rrp_regime(f: pd.DataFrame) -> dict | None:
+    """逆回购还有没有余额替准备金挡住 TGA 回补。耗尽以后,财政部多收的每一块钱几乎都直接从银行准备金里抽走。"""
+    if "rrp" not in f or f["rrp"].dropna().empty:
+        return None
+    rrp = f["rrp"].dropna()
+    now = float(rrp.iloc[-1])
+    empty = now < RRP_EMPTY_BN
+    flip = rrp[(rrp < RRP_EMPTY_BN) != empty]
+    since = (rrp.index[rrp.index > flip.index[-1]][0] if len(flip) else rrp.index[0])
+    tga_chg = f["tga_chg"].dropna() if "tga_chg" in f else pd.Series(dtype=float)
+    pt = _tga_pass_through(f)
+    k = pt.get("empty" if empty else "buffer", {}).get("reserves")
+    t4 = round(float(tga_chg.iloc[-1]), 0) if len(tga_chg) else None
+    return {"date": rrp.index[-1].strftime("%Y-%m-%d"), "rrp_bn": round(now, 1), "empty": bool(empty),
+            "line_bn": RRP_EMPTY_BN, "since": since.strftime("%Y-%m-%d"), "days": int((rrp.index[-1] - since).days),
+            "tga_chg_bn": t4, "reserve_hit_bn": None if k is None or t4 is None else round(k * t4, 0),
+            "pass_through": pt}
+
+
+# ---------------------------------------------------------------------------
 # 汇总
 # ---------------------------------------------------------------------------
 
@@ -350,6 +393,7 @@ def compute(f: pd.DataFrame, raw: pd.DataFrame, out: Path, offline: bool = False
         "maturities": {d.strftime("%Y-%m-%d"): round(float(v), 1) for d, v in mats.items()},
         "gears": _gears(f, raw, m, vix),
         "diverge": divergence(f, m),
+        "rrp_regime": rrp_regime(f),
     }
 
 
@@ -395,6 +439,16 @@ def report_lines(w: dict, research_note: str | None = None) -> list[str]:
                  + (f",HYG/IEF 3 个月 {dv['hyg_ief63']:+.1%}" if dv['hyg_ief63'] is not None else "")
                  + f";SPY 距一年高点 {dv['spy_vs_high']:+.1%}。"
                  + ("**背离警报。**" if dv["alarm"] else "未触发。") + f"规则:{dv['rule']}。")
+    rg = w.get("rrp_regime")
+    if rg:
+        pt = rg["pass_through"]
+        L.append(f"- **逆回购缓冲**({rg['date']}):逆回购 {rg['rrp_bn']:,.1f} 十亿美元,"
+                 + (f"**缓冲已耗尽**(低于 {rg['line_bn']} 十亿,自 {rg['since']} 起 {rg['days']} 天)" if rg["empty"]
+                    else f"还有缓冲(自 {rg['since']} 起高于 {rg['line_bn']} 十亿)")
+                 + (f";TGA 4 周 {rg['tga_chg_bn']:+,.0f} 十亿,按历史关系对应准备金约 {rg['reserve_hit_bn']:+,.0f} 十亿" if rg["reserve_hit_bn"] is not None else "")
+                 + "。" + (f"2009 年以来:逆回购耗尽时 TGA 每增加 1 美元,4 周内准备金平均减少 {-pt['empty']['reserves']:.2f} 美元、逆回购减少 {-pt['empty']['rrp']:.2f};"
+                          f"有缓冲时准备金减少 {-pt['buffer']['reserves']:.2f}、逆回购吸收 {-pt['buffer']['rrp']:.2f}(控制了联储总资产变化)。"
+                          if {"empty", "buffer"} <= set(pt) else ""))
     if w.get("gears"):
         import gears
         g = gears.report_line(w["gears"])

@@ -300,7 +300,10 @@ __GEARS__
       <div class="wbox" id="wReb"></div>
       <div class="wbox" id="wCross"></div>
     </div>
-    <div class="wbox" id="wDiv" style="margin-top:12px"></div>
+    <div class="grid2" style="margin-top:12px">
+      <div class="wbox" id="wDiv"></div>
+      <div class="wbox" id="wRrp"></div>
+    </div>
     <div class="grid2" style="margin-top:12px">
       <div><div class="sub">SOFR − IORB 近一年(BP),背景 = 分档</div><div id="cPipe" class="chart" style="height:220px"></div></div>
       <div><div class="sub">黄金(GLD)与纳指(QQQ)20 日收益相关性</div><div id="cCorr" class="chart" style="height:220px"></div></div>
@@ -809,6 +812,17 @@ else {
     `HYG/IEF 3 个月 <b>${DV.hyg_ief63 == null ? "—" : sgn(DV.hyg_ief63 * 100, 1, "%")}</b></div>` +
     `<div>SPY 距一年高点 <b>${sgn(DV.spy_vs_high * 100, 1, "%")}</b> · QQQ 5 日 <b>${DV.qqq5 == null ? "—" : sgn(DV.qqq5 * 100, 1, "%")}</b>(${DV.date})</div>` +
     `<div class="sub">规则:${DV.rule}。历史检验见下面“新指标历史检验”。</div>`;
+  const RG = W.rrp_regime, rEl = document.getElementById("wRrp");
+  if (!RG) rEl.style.display = "none";
+  else {
+    const pt = RG.pass_through || {};
+    rEl.innerHTML = `<h3>逆回购缓冲:TGA 回补从哪里抽钱</h3>` +
+      `<div class="v ${RG.empty ? "neg" : "pos"}">${RG.empty ? "缓冲已耗尽" : "还有缓冲"}</div>` +
+      `<div>逆回购 <b>${fmt(RG.rrp_bn, 1)}</b> 十亿美元(${RG.date})· ${RG.empty ? "低于" : "高于"} ${RG.line_bn} 十亿已 <b>${RG.days}</b> 天(自 ${RG.since})</div>` +
+      (RG.reserve_hit_bn == null ? "" : `<div>TGA 4 周 <b>${sgn(RG.tga_chg_bn, 0)}</b> 十亿 → 按历史关系,准备金约 <b class="${RG.reserve_hit_bn < 0 ? "neg" : "pos"}">${sgn(RG.reserve_hit_bn, 0)}</b> 十亿</div>`) +
+      (pt.empty && pt.buffer ? `<div class="sub" style="margin-top:4px">2009 年以来按周回归(控制联储总资产):逆回购耗尽时,TGA 每增加 1 美元,4 周内准备金平均 −${(-pt.empty.reserves).toFixed(2)}、逆回购 −${(-pt.empty.rrp).toFixed(2)};` +
+        `有缓冲时准备金 −${(-pt.buffer.reserves).toFixed(2)}、逆回购吸收 −${(-pt.buffer.rrp).toFixed(2)}。所以耗尽以后,净流动性公式里“逆回购”这一项不再起作用,TGA 和准备金几乎一对一。</div>` : "");
+  }
   const vl = W.vix_latest, mg = W.margin;
   document.getElementById("wNote").innerHTML =
     (vl ? `最新 VIX ${fmt(vl.value, 2)}(${vl.date},FRED 滞后时用 Yahoo 当日收盘补)。` : "") +
