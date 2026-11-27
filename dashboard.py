@@ -821,7 +821,7 @@ else {
       `<div>逆回购 <b>${fmt(RG.rrp_bn, 1)}</b> 十亿美元(${RG.date})· ${RG.empty ? "低于" : "高于"} ${RG.line_bn} 十亿已 <b>${RG.days}</b> 天(自 ${RG.since})</div>` +
       (RG.reserve_hit_bn == null ? "" : `<div>TGA 4 周 <b>${sgn(RG.tga_chg_bn, 0)}</b> 十亿 → 按历史关系,准备金约 <b class="${RG.reserve_hit_bn < 0 ? "neg" : "pos"}">${sgn(RG.reserve_hit_bn, 0)}</b> 十亿</div>`) +
       (pt.empty && pt.buffer ? `<div class="sub" style="margin-top:4px">2009 年以来按周回归(控制联储总资产):逆回购耗尽时,TGA 每增加 1 美元,4 周内准备金平均 −${(-pt.empty.reserves).toFixed(2)}、逆回购 −${(-pt.empty.rrp).toFixed(2)};` +
-        `有缓冲时准备金 −${(-pt.buffer.reserves).toFixed(2)}、逆回购吸收 −${(-pt.buffer.rrp).toFixed(2)}。所以耗尽以后,净流动性公式里“逆回购”这一项不再起作用,TGA 和准备金几乎一对一。</div>` : "");
+        `有缓冲时准备金 −${(-pt.buffer.reserves).toFixed(2)}、逆回购吸收 −${(-pt.buffer.rrp).toFixed(2)}。所以耗尽以后,逆回购不再替准备金挡钱,财政部多收的钱大部分直接从银行准备金里出。</div>` : "");
   }
   const vl = W.vix_latest, mg = W.margin;
   document.getElementById("wNote").innerHTML =
